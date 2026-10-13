@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import android.provider.MediaStore.Audio.Media as M
 import androidx.compose.runtime.*
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -16,7 +17,6 @@ data class Song(val id: Long, val title: String, val artist: String, val albumId
 /** Automatically detects every music file on the device via MediaStore. */
 fun scanSongs(ctx: Context): List<Song> {
     val out = mutableListOf<Song>()
-    val M = MediaStore.Audio.Media
     val proj = arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM_ID)
     ctx.contentResolver.query(M.EXTERNAL_CONTENT_URI, proj,
         "${M.IS_MUSIC}!=0 AND ${M.DURATION}>30000", null, "${M.DATE_ADDED} DESC")?.use { c ->
