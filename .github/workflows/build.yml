@@ -1,4 +1,31 @@
 name: Build APK
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.9 }
+      - run: gradle assembleDebug
+      - run: mv app/build/outputs/apk/debug/app-debug.apk Pixelfy.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: Pixelfy-apk, path: Pixelfy.apk }
+      - uses: softprops/action-gh-rele
+
+git tag v1.0
+git push origin v1.0
+git tag -d v1.0
+git push origin :refs/tags/v1.0mkdir -p .github/workflows
+cat > .github/workflows/build.yml <<'EOF'
+name: Build APK
 on: [push, workflow_dispatch]
 jobs:
   build:
