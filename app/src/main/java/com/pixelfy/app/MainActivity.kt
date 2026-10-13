@@ -25,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -44,7 +45,27 @@ import kotlinx.coroutines.withContext
 import kotlin.math.cos
 import kotlin.math.sin
 
-val Green = Color(0xFF1ED760); val Bg = Color(0xFF0E0C0C); val TileBg = Color(0xFF2A2A2A); val Grey = Color(0xFFB3B3B3)
+val Green = Color(0xFF1ED760); val Bg = Color.Black; val TileBg = Color(0xFF2A2A2A); val Grey = Color(0xFFB3B3B3)
+
+// ---------- Glassmorphism ----------
+fun Modifier.glass(shape: Shape = RoundedCornerShape(16.dp), a: Float = 0.08f): Modifier = this
+    .clip(shape)
+    .background(Brush.linearGradient(listOf(Color.White.copy(a + 0.07f), Color.White.copy(a * 0.35f))))
+    .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.38f), Color.White.copy(0.04f), Color.White.copy(0.16f))), shape)
+
+/** Pure OLED black with soft colour glows so the frosted glass has something to refract. */
+@Composable fun GlassBackdrop() {
+    Canvas(Modifier.fillMaxSize()) {
+        val w = size.width; val h = size.height
+        drawRect(Color.Black)
+        fun orb(c: Color, x: Float, y: Float, r: Float) =
+            drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), Offset(x, y), r), r, Offset(x, y))
+        orb(Green.copy(0.30f), w * 0.10f, h * 0.10f, w * 0.80f)
+        orb(Color(0xFF7B4DFF).copy(0.22f), w * 0.95f, h * 0.38f, w * 0.70f)
+        orb(Color(0xFF14B8A6).copy(0.16f), w * 0.05f, h * 0.68f, w * 0.65f)
+        orb(Color(0xFFFF6A3D).copy(0.14f), w * 0.90f, h * 0.92f, w * 0.60f)
+    }
+}
 
 // ---------- Haptics ----------
 fun View.buzz(strong: Boolean = false) {
@@ -79,7 +100,9 @@ class MainActivity : ComponentActivity() {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }   // auto-detect new songs when app returns
     LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
 
-    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF1B3A22), Bg), endY = 900f))) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    GlassBackdrop()
+    Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             when (tab) {
                 0 -> Home(songs)
@@ -91,11 +114,12 @@ class MainActivity : ComponentActivity() {
         MiniPlayer()
         NavBar(tab) { tab = it }
     }
+    }
 }
 
 // ---------- Components ----------
 @Composable fun Art(s: Song, mod: Modifier, shape: Shape = RoundedCornerShape(6.dp)) {
-    Box(mod.clip(shape).background(Color(0xFF333333)), contentAlignment = Alignment.Center) {
+    Box(mod.clip(shape).background(Color(0xFF1C1C1C)).border(1.dp, Color.White.copy(0.18f), shape), contentAlignment = Alignment.Center) {
         Icon(Icons.Rounded.MusicNote, null, tint = Color.Gray)
         AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
     }
@@ -114,13 +138,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable fun Chip(t: String, sel: Boolean, onClick: () -> Unit) {
-    Box(Modifier.clip(RoundedCornerShape(50)).background(if (sel) Green else TileBg).tap { onClick() }.padding(horizontal = 14.dp, vertical = 7.dp)) {
+    Box((if (sel) Modifier.clip(RoundedCornerShape(50)).background(Green) else Modifier.glass(RoundedCornerShape(50))).tap { onClick() }.padding(horizontal = 14.dp, vertical = 7.dp)) {
         Text(t, color = if (sel) Color.Black else Green, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable fun Tile(title: String, modifier: Modifier, lead: @Composable () -> Unit, onClick: () -> Unit) {
-    Row(modifier.height(56.dp).clip(RoundedCornerShape(8.dp)).background(TileBg).tap { onClick() }, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.height(56.dp).glass(RoundedCornerShape(14.dp)).tap { onClick() }, verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) { lead() }
         Text(title, Modifier.padding(horizontal = 8.dp), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
@@ -132,7 +156,7 @@ class MainActivity : ComponentActivity() {
     Icon(icon, null, tint = tint, modifier = Modifier.size(42.dp).clip(CircleShape).tap(strong) { onClick() }.padding(9.dp))
 
 @Composable fun SongRow(s: Song, all: List<Song>) {
-    Row(Modifier.fillMaxWidth().tap { Audio.play(all, all.indexOf(s)) }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).glass(RoundedCornerShape(14.dp), 0.06f).tap { Audio.play(all, all.indexOf(s)) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Art(s, Modifier.size(50.dp), RoundedCornerShape(4.dp))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(s.title, color = if (Audio.current?.id == s.id) Green else Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -150,7 +174,7 @@ class MainActivity : ComponentActivity() {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             Row(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(TileBg), Alignment.Center) { Text("J", color = Green, fontWeight = FontWeight.Bold) }
+                Box(Modifier.size(34.dp).glass(CircleShape), Alignment.Center) { Text("J", color = Green, fontWeight = FontWeight.Bold) }
                 listOf("All", "Music", "Podcasts").forEachIndexed { i, t -> Chip(t, chip == i) { chip = i } }
             }
         }
@@ -202,8 +226,8 @@ class MainActivity : ComponentActivity() {
         Text("Search", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
         TextField(q, { q = it }, Modifier.fillMaxWidth().padding(vertical = 14.dp), singleLine = true, shape = RoundedCornerShape(8.dp),
             placeholder = { Text("Songs or artists") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
-            colors = TextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
-                focusedTextColor = Color.Black, unfocusedTextColor = Color.Black, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+            colors = TextFieldDefaults.colors(focusedContainerColor = Color.White.copy(0.10f), unfocusedContainerColor = Color.White.copy(0.10f),
+                focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
         val r = songs.filter { it.title.contains(q, true) || it.artist.contains(q, true) }
         LazyColumn { items(r) { SongRow(it, r) } }
     }
@@ -230,7 +254,7 @@ class MainActivity : ComponentActivity() {
 @Composable fun MiniPlayer() {
     val s = Audio.current ?: return
     val liked = s.id in Audio.liked
-    Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF6B4A38), Color(0xFF2A1A14)))).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).glass(RoundedCornerShape(18.dp), 0.14f).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Art(s, Modifier.size(40.dp), RoundedCornerShape(4.dp))
         Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
             Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -245,7 +269,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit) {
     val items = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
-    Row(Modifier.fillMaxWidth().background(Color(0xFF1A1412)).navigationBarsPadding().padding(vertical = 8.dp)) {
+    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp).glass(RoundedCornerShape(24.dp), 0.10f).padding(vertical = 10.dp)) {
         items.forEachIndexed { i, (label, icon) ->
             Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(icon, null, tint = if (i == sel) Color.White else Grey, modifier = Modifier.size(26.dp))
