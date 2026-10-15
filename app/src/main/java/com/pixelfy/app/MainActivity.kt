@@ -24,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
@@ -53,17 +54,21 @@ fun Modifier.glass(shape: Shape = RoundedCornerShape(16.dp), a: Float = 0.08f): 
     .background(Brush.linearGradient(listOf(Color.White.copy(a + 0.07f), Color.White.copy(a * 0.35f))))
     .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.38f), Color.White.copy(0.04f), Color.White.copy(0.16f))), shape)
 
-/** Pure OLED black with soft colour glows so the frosted glass has something to refract. */
+/** Pure OLED black with slowly drifting, glowing colour orbs. */
 @Composable fun GlassBackdrop() {
+    val tr = rememberInfiniteTransition(label = "glow")
+    val a by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "a")
+    val b by tr.animateFloat(1f, 0f, infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse), label = "b")
     Canvas(Modifier.fillMaxSize()) {
         val w = size.width; val h = size.height
         drawRect(Color.Black)
         fun orb(c: Color, x: Float, y: Float, r: Float) =
-            drawCircle(Brush.radialGradient(listOf(c, Color.Transparent), Offset(x, y), r), r, Offset(x, y))
-        orb(Green.copy(0.30f), w * 0.10f, h * 0.10f, w * 0.80f)
-        orb(Color(0xFF7B4DFF).copy(0.22f), w * 0.95f, h * 0.38f, w * 0.70f)
-        orb(Color(0xFF14B8A6).copy(0.16f), w * 0.05f, h * 0.68f, w * 0.65f)
-        orb(Color(0xFFFF6A3D).copy(0.14f), w * 0.90f, h * 0.92f, w * 0.60f)
+            drawCircle(Brush.radialGradient(listOf(c, c.copy(alpha = c.alpha * 0.35f), Color.Transparent), Offset(x, y), r), r, Offset(x, y))
+        orb(Green.copy(0.42f), w * (0.10f + 0.18f * a), h * (0.08f + 0.06f * b), w * 0.9f)
+        orb(Color(0xFF7B4DFF).copy(0.34f), w * (0.95f - 0.20f * b), h * (0.36f + 0.08f * a), w * 0.8f)
+        orb(Color(0xFF14B8A6).copy(0.26f), w * (0.05f + 0.15f * b), h * (0.70f - 0.07f * a), w * 0.75f)
+        orb(Color(0xFFFF6A3D).copy(0.20f), w * (0.90f - 0.15f * a), h * (0.92f - 0.05f * b), w * 0.7f)
+        drawRect(Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(0.35f)), Offset(w / 2, h / 2), h * 0.9f))
     }
 }
 
@@ -97,6 +102,11 @@ class MainActivity : ComponentActivity() {
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     LaunchedEffect(Unit) { if (!granted) launcher.launch(perm) }
+    val notif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(granted) {
+        if (granted && Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            notif.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }   // auto-detect new songs when app returns
     LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
 
