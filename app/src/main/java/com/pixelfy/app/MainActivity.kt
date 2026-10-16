@@ -32,6 +32,14 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.draw.blur
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import kotlinx.coroutines.delay
 import androidx.compose.ui.draw.clip
@@ -90,7 +98,10 @@ fun View.buzz(strong: Boolean = false) {
 }
 @Composable fun Modifier.tap(strong: Boolean = false, onClick: () -> Unit): Modifier {
     val v = LocalView.current
-    return clickable { v.buzz(strong); onClick() }
+    val src = remember { MutableInteractionSource() }
+    val pressed by src.collectIsPressedAsState()
+    val sc by animateFloatAsState(if (pressed) 0.93f else 1f, spring(dampingRatio = 0.4f, stiffness = 600f), label = "press")
+    return graphicsLayer { scaleX = sc; scaleY = sc }.clickable(interactionSource = src, indication = LocalIndication.current) { v.buzz(strong); onClick() }
 }
 
 class MainActivity : ComponentActivity() {
@@ -138,7 +149,7 @@ class MainActivity : ComponentActivity() {
 }
 
 // ---------- Components ----------
-@Composable fun Art(s: Song, mod: Modifier, shape: Shape = RoundedCornerShape(6.dp)) {
+@Composable fun Art(s: Song, mod: Modifier, shape: Shape = RoundedCornerShape(22.dp)) {
     Box(mod.clip(shape).background(Color(0xFF333333)), contentAlignment = Alignment.Center) {
         Icon(Icons.Rounded.MusicNote, null, tint = Color.Gray)
         AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -164,8 +175,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable fun Tile(title: String, modifier: Modifier, lead: @Composable () -> Unit, onClick: () -> Unit) {
-    Row(modifier.height(56.dp).clip(RoundedCornerShape(8.dp)).background(TileBg).tap { onClick() }, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) { lead() }
+    Row(modifier.height(60.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onClick() }, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(60.dp), contentAlignment = Alignment.Center) { lead() }
         Text(title, Modifier.padding(horizontal = 8.dp), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -274,7 +285,7 @@ class MainActivity : ComponentActivity() {
 @Composable fun MiniPlayer(onOpen: () -> Unit) {
     val s = Audio.current ?: return
     val liked = s.id in Audio.liked
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(28.dp)
     // Frosted glass: blurred album art + light tint + glossy edge
     Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).clip(shape).background(Color(0xFF222222))
         .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), shape)) {
@@ -326,7 +337,7 @@ val NpThemes = listOf(
     val r = res
     if (r == null) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Text(if (!done) "Loading lyrics…" else "No lyrics found.\nConnect to the internet and try again.",
+            if (!done) LoadingBlob(t.fg) else Text("No lyrics found.\nConnect to the internet and try again.",
                 color = t.fg.copy(0.7f), fontSize = 16.sp, textAlign = TextAlign.Center)
         }
         return
@@ -380,22 +391,19 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
             }
             IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = t.fg) { Audio.toggleLike(s) }
         }
-        Slider(
-            value = drag ?: (if (dur > 0) pos.toFloat() / dur else 0f),
-            onValueChange = { drag = it },
-            onValueChangeFinished = { drag?.let { Audio.seekTo((it * dur).toLong()) }; drag = null; view.buzz() },
-            colors = SliderDefaults.colors(thumbColor = t.fg, activeTrackColor = t.fg, inactiveTrackColor = t.fg.copy(0.25f))
-        )
+        WavySeek(drag ?: (if (dur > 0) pos.toFloat() / dur else 0f), Audio.playing, t.fg, { drag = it },
+            { drag?.let { Audio.seekTo((it * dur).toLong()) }; drag = null; view.buzz() })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(fmt(pos), color = t.fg.copy(0.75f), fontSize = 12.sp); Text(fmt(dur), color = t.fg.copy(0.75f), fontSize = 12.sp)
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             IconBtn(Icons.Rounded.Shuffle, tint = if (Audio.shuffle) t.fg else t.fg.copy(0.4f)) { Audio.toggleShuffle() }
-            IconBtn(Icons.Rounded.SkipPrevious, tint = t.fg) { Audio.prev() }
-            Box(Modifier.size(72.dp).clip(CircleShape).background(t.fg).tap(true) { Audio.toggle() }, Alignment.Center) {
+            TonalBtn(Icons.Rounded.SkipPrevious, t.fg) { Audio.prev() }
+            val corner by animateDpAsState(if (Audio.playing) 24.dp else 40.dp, spring(0.5f, 300f), label = "pc")
+            Box(Modifier.size(80.dp, 72.dp).clip(RoundedCornerShape(corner)).background(t.fg).tap(true) { Audio.toggle() }, Alignment.Center) {
                 Icon(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = t.bg, modifier = Modifier.size(38.dp))
             }
-            IconBtn(Icons.Rounded.SkipNext, tint = t.fg) { Audio.next() }
+            TonalBtn(Icons.Rounded.SkipNext, t.fg) { Audio.next() }
             IconBtn(if (Audio.repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                 tint = if (Audio.repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) t.fg else t.fg.copy(0.4f)) { Audio.cycleRepeat() }
         }
@@ -414,10 +422,49 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     val items = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
     Row(Modifier.fillMaxWidth().background(Color.Black).navigationBarsPadding().padding(vertical = 8.dp)) {
         items.forEachIndexed { i, (label, icon) ->
+            val on = i == sel
+            val pill by animateColorAsState(if (on) Green.copy(0.28f) else Color.Transparent, label = "pill")
+            val w by animateDpAsState(if (on) 64.dp else 40.dp, spring(0.6f, 400f), label = "pw")
             Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(icon, null, tint = if (i == sel) Color.White else Grey, modifier = Modifier.size(26.dp))
-                Text(label, color = if (i == sel) Color.White else Grey, fontSize = 11.sp, fontWeight = if (i == sel) FontWeight.Bold else FontWeight.Normal)
+                Box(Modifier.size(w, 32.dp).clip(RoundedCornerShape(16.dp)).background(pill), Alignment.Center) {
+                    Icon(icon, null, tint = if (on) Color.White else Grey, modifier = Modifier.size(24.dp))
+                }
+                Text(label, color = if (on) Color.White else Grey, fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
             }
         }
+    }
+}
+
+@Composable fun TonalBtn(icon: ImageVector, fg: Color, onClick: () -> Unit) =
+    Box(Modifier.size(56.dp).clip(RoundedCornerShape(20.dp)).background(fg.copy(0.16f)).tap { onClick() }, Alignment.Center) {
+        Icon(icon, null, tint = fg, modifier = Modifier.size(28.dp))
+    }
+
+@Composable fun LoadingBlob(c: Color) {
+    val tr = rememberInfiniteTransition(label = "lb")
+    val rot by tr.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "r")
+    val sc by tr.animateFloat(0.8f, 1.1f, infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "s")
+    Spikes(Modifier.size(56.dp).graphicsLayer { rotationZ = rot; scaleX = sc; scaleY = sc }, 9, 0.78f, c)
+}
+
+/** Expressive wavy progress bar: the played part waves while music plays; drag or tap to seek. */
+@Composable fun WavySeek(value: Float, playing: Boolean, color: Color, onChange: (Float) -> Unit, onFinish: () -> Unit) {
+    val tr = rememberInfiniteTransition(label = "w")
+    val phase by tr.animateFloat(0f, (2 * Math.PI).toFloat(), infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "p")
+    val amp by animateFloatAsState(if (playing) 1f else 0f, spring(dampingRatio = 0.6f, stiffness = 80f), label = "a")
+    val change by rememberUpdatedState(onChange)
+    val finish by rememberUpdatedState(onFinish)
+    Canvas(Modifier.fillMaxWidth().height(40.dp)
+        .pointerInput(Unit) { detectTapGestures { change((it.x / size.width).coerceIn(0f, 1f)); finish() } }
+        .pointerInput(Unit) { detectHorizontalDragGestures(onDragEnd = { finish() }, onDragCancel = { finish() }) { c, _ -> change((c.position.x / size.width).coerceIn(0f, 1f)) } }
+    ) {
+        val w = size.width; val cy = size.height / 2; val stroke = 5.dp.toPx(); val x = w * value.coerceIn(0f, 1f)
+        val a = 6.dp.toPx() * amp; val wl = 28.dp.toPx(); val twoPi = (2 * Math.PI).toFloat()
+        drawLine(color.copy(0.25f), Offset(x, cy), Offset(w, cy), stroke, StrokeCap.Round)
+        val p = Path(); p.moveTo(0f, cy + a * sin(phase))
+        var px = 4f
+        while (px <= x) { p.lineTo(px, cy + a * sin(px / wl * twoPi + phase)); px += 4f }
+        drawPath(p, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        drawRoundRect(color, Offset(x - 3.dp.toPx(), cy - 14.dp.toPx()), Size(6.dp.toPx(), 28.dp.toPx()), CornerRadius(3.dp.toPx()))
     }
 }
