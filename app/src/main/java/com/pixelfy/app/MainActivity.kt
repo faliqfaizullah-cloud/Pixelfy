@@ -26,6 +26,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.animation.core.*
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -316,6 +318,34 @@ val NpThemes = listOf(
     }
 }
 
+@Composable fun LyricsView(s: Song, pos: Long, t: NpTheme) {
+    val ctx = LocalContext.current
+    var res by remember(s.id) { mutableStateOf<LyricsResult?>(null) }
+    var done by remember(s.id) { mutableStateOf(false) }
+    LaunchedEffect(s.id) { res = Lyrics.load(ctx, s, Audio.player.duration.coerceAtLeast(0L)); done = true }
+    val r = res
+    if (r == null) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            Text(if (!done) "Loading lyrics…" else "No lyrics found.\nConnect to the internet and try again.",
+                color = t.fg.copy(0.7f), fontSize = 16.sp, textAlign = TextAlign.Center)
+        }
+        return
+    }
+    val idx = if (r.synced) r.lines.indexOfLast { it.ms <= pos } else -1
+    val st = rememberLazyListState()
+    LaunchedEffect(idx) { if (idx >= 0) st.animateScrollToItem(idx, -st.layoutInfo.viewportSize.height / 3) }
+    LazyColumn(Modifier.fillMaxSize(), st, contentPadding = PaddingValues(vertical = 80.dp)) {
+        items(r.lines.size) { i ->
+            val l = r.lines[i]
+            val active = !r.synced || i == idx
+            val col by animateColorAsState(if (active) t.fg else t.fg.copy(0.38f), label = "c")
+            Text(l.text.ifBlank { if (r.synced) "♪" else " " },
+                Modifier.fillMaxWidth().then(if (r.synced) Modifier.tap { Audio.seekTo(l.ms) } else Modifier).padding(vertical = 8.dp),
+                color = col, fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
 fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
 
 @Composable fun NowPlaying(onClose: () -> Unit) {
@@ -326,17 +356,18 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     var drag by remember { mutableStateOf<Float?>(null) }
-    LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(300) } }
+    var showLyrics by remember { mutableStateOf(false) }
+    LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(200) } }
     val rot by rememberInfiniteTransition(label = "r").animateFloat(0f, 360f, infiniteRepeatable(tween(40000, easing = LinearEasing)), label = "rot")
     val liked = s.id in Audio.liked
     Column(Modifier.fillMaxSize().background(t.bg).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconBtn(Icons.Rounded.KeyboardArrowDown, tint = t.fg) { onClose() }
             Text("Now Playing", Modifier.weight(1f), color = t.fg, fontWeight = FontWeight.Bold, fontSize = 14.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.size(42.dp))
+            IconBtn(Icons.Rounded.Subject, tint = if (showLyrics) t.fg else t.fg.copy(0.55f)) { showLyrics = !showLyrics }
         }
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Box(Modifier.aspectRatio(1f), contentAlignment = Alignment.Center) {
+            if (showLyrics) LyricsView(s, pos, t) else Box(Modifier.aspectRatio(1f), contentAlignment = Alignment.Center) {
                 Spikes(Modifier.fillMaxSize().graphicsLayer { rotationZ = rot }, 14, 0.74f, t.burst)
                 Box(Modifier.fillMaxSize(0.62f).graphicsLayer { rotationZ = 45f }.background(t.diamond))
                 Art(s, Modifier.fillMaxSize(0.42f), RoundedCornerShape(2.dp))
