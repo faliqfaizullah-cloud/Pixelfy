@@ -75,7 +75,7 @@ object Audio {
     fun playLiked(all: List<Song>) { val l = all.filter { it.id in liked }; if (l.isNotEmpty()) play(l, 0) }
     fun toggle() { if (exo.isPlaying) exo.pause() else exo.play() }
     fun seekTo(ms: Long) = exo.seekTo(ms)
-    fun setTheme(i: Int) { theme = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("theme", i).apply() }
+    fun chooseTheme(i: Int) { theme = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("theme", i).apply() }
     fun toggleShuffle() { shuffle = !shuffle; exo.shuffleModeEnabled = shuffle }
     fun cycleRepeat() {
         repeat = when (repeat) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF }

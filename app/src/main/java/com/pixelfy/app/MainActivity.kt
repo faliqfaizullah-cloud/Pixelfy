@@ -374,7 +374,7 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
             NpThemes.forEachIndexed { i, th ->
                 val sel = i == Audio.theme
                 Box(Modifier.padding(horizontal = 6.dp).size(30.dp).clip(CircleShape).background(th.bg)
-                    .border(if (sel) 3.dp else 1.dp, if (sel) t.fg else t.fg.copy(0.3f), CircleShape).tap { Audio.setTheme(i) })
+                    .border(if (sel) 3.dp else 1.dp, if (sel) t.fg else t.fg.copy(0.3f), CircleShape).tap { Audio.chooseTheme(i) })
             }
         }
     }
