@@ -24,7 +24,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.text.style.TextAlign
+import kotlinx.coroutines.delay
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
@@ -97,6 +104,7 @@ class MainActivity : ComponentActivity() {
     val ctx = LocalContext.current
     var songs by remember { mutableStateOf(emptyList<Song>()) }
     var tab by remember { mutableIntStateOf(0) }
+    var full by remember { mutableStateOf(false) }
     var tick by remember { mutableIntStateOf(0) }
     val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED) }
@@ -121,15 +129,16 @@ class MainActivity : ComponentActivity() {
                 else -> CreateScreen(songs.size) { tick++ }
             }
         }
-        MiniPlayer()
+        MiniPlayer { full = true }
         NavBar(tab) { tab = it }
     }
+    AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
     }
 }
 
 // ---------- Components ----------
 @Composable fun Art(s: Song, mod: Modifier, shape: Shape = RoundedCornerShape(6.dp)) {
-    Box(mod.clip(shape).background(Color(0xFF1C1C1C)).border(1.dp, Color.White.copy(0.18f), shape), contentAlignment = Alignment.Center) {
+    Box(mod.clip(shape).background(Color(0xFF333333)), contentAlignment = Alignment.Center) {
         Icon(Icons.Rounded.MusicNote, null, tint = Color.Gray)
         AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
     }
@@ -148,13 +157,13 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable fun Chip(t: String, sel: Boolean, onClick: () -> Unit) {
-    Box((if (sel) Modifier.clip(RoundedCornerShape(50)).background(Green) else Modifier.glass(RoundedCornerShape(50))).tap { onClick() }.padding(horizontal = 14.dp, vertical = 7.dp)) {
+    Box(Modifier.clip(RoundedCornerShape(50)).background(if (sel) Green else TileBg).tap { onClick() }.padding(horizontal = 14.dp, vertical = 7.dp)) {
         Text(t, color = if (sel) Color.Black else Green, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 
 @Composable fun Tile(title: String, modifier: Modifier, lead: @Composable () -> Unit, onClick: () -> Unit) {
-    Row(modifier.height(56.dp).glass(RoundedCornerShape(14.dp)).tap { onClick() }, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.height(56.dp).clip(RoundedCornerShape(8.dp)).background(TileBg).tap { onClick() }, verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) { lead() }
         Text(title, Modifier.padding(horizontal = 8.dp), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
@@ -166,7 +175,7 @@ class MainActivity : ComponentActivity() {
     Icon(icon, null, tint = tint, modifier = Modifier.size(42.dp).clip(CircleShape).tap(strong) { onClick() }.padding(9.dp))
 
 @Composable fun SongRow(s: Song, all: List<Song>) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).glass(RoundedCornerShape(14.dp), 0.06f).tap { Audio.play(all, all.indexOf(s)) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().tap { Audio.play(all, all.indexOf(s)) }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Art(s, Modifier.size(50.dp), RoundedCornerShape(4.dp))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(s.title, color = if (Audio.current?.id == s.id) Green else Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -184,7 +193,7 @@ class MainActivity : ComponentActivity() {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             Row(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).glass(CircleShape), Alignment.Center) { Text("J", color = Green, fontWeight = FontWeight.Bold) }
+                Box(Modifier.size(34.dp).clip(CircleShape).background(TileBg), Alignment.Center) { Text("J", color = Green, fontWeight = FontWeight.Bold) }
                 listOf("All", "Music", "Podcasts").forEachIndexed { i, t -> Chip(t, chip == i) { chip = i } }
             }
         }
@@ -236,8 +245,8 @@ class MainActivity : ComponentActivity() {
         Text("Search", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
         TextField(q, { q = it }, Modifier.fillMaxWidth().padding(vertical = 14.dp), singleLine = true, shape = RoundedCornerShape(8.dp),
             placeholder = { Text("Songs or artists") }, leadingIcon = { Icon(Icons.Rounded.Search, null) },
-            colors = TextFieldDefaults.colors(focusedContainerColor = Color.White.copy(0.10f), unfocusedContainerColor = Color.White.copy(0.10f),
-                focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+            colors = TextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
+                focusedTextColor = Color.Black, unfocusedTextColor = Color.Black, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
         val r = songs.filter { it.title.contains(q, true) || it.artist.contains(q, true) }
         LazyColumn { items(r) { SongRow(it, r) } }
     }
@@ -261,25 +270,119 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable fun MiniPlayer() {
+@Composable fun MiniPlayer(onOpen: () -> Unit) {
     val s = Audio.current ?: return
     val liked = s.id in Audio.liked
-    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).glass(RoundedCornerShape(18.dp), 0.14f).padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Art(s, Modifier.size(40.dp), RoundedCornerShape(4.dp))
-        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-            Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(s.artist, color = Grey, fontSize = 12.sp, maxLines = 1)
+    val shape = RoundedCornerShape(18.dp)
+    // Frosted glass: blurred album art + light tint + glossy edge
+    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).clip(shape).background(Color(0xFF222222))
+        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), shape)) {
+        AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.matchParentSize().blur(40.dp), contentScale = ContentScale.Crop)
+        Box(Modifier.matchParentSize().background(Brush.linearGradient(listOf(Color.White.copy(0.20f), Color.Black.copy(0.40f)))))
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).tap { onOpen() }, verticalAlignment = Alignment.CenterVertically) {
+                Art(s, Modifier.size(40.dp), RoundedCornerShape(4.dp))
+                Column(Modifier.padding(horizontal = 10.dp)) {
+                    Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(s.artist, color = Color.White.copy(0.75f), fontSize = 12.sp, maxLines = 1)
+                }
+            }
+            IconBtn(Icons.Rounded.SkipPrevious) { Audio.prev() }
+            IconBtn(if (liked) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, tint = if (liked) Green else Color.White) { Audio.toggleLike(s) }
+            IconBtn(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, strong = true) { Audio.toggle() }
+            IconBtn(Icons.Rounded.SkipNext) { Audio.next() }
         }
-        IconBtn(Icons.Rounded.SkipPrevious) { Audio.prev() }
-        IconBtn(if (liked) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, tint = if (liked) Green else Color.White) { Audio.toggleLike(s) }
-        IconBtn(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, strong = true) { Audio.toggle() }
-        IconBtn(Icons.Rounded.SkipNext) { Audio.next() }
+    }
+}
+
+// ---------- Full-screen player (Wrapped-style themes) ----------
+data class NpTheme(val bg: Color, val burst: Color, val diamond: Color, val fg: Color)
+val NpThemes = listOf(
+    NpTheme(Color(0xFF16D957), Color(0xFFE7FF3C), Color(0xFFF56EC6), Color(0xFF0B0B0B)),
+    NpTheme(Color(0xFFF56EC6), Color(0xFFE7FF3C), Color(0xFFFF8A1E), Color(0xFF0B0B0B)),
+    NpTheme(Color(0xFF6600B8), Color(0xFFE7FF3C), Color(0xFFFF8A1E), Color.White),
+    NpTheme(Color(0xFFFF8A1E), Color(0xFFE7FF3C), Color(0xFF16D957), Color(0xFF0B0B0B)),
+    NpTheme(Color(0xFF121212), Color(0xFF6600B8), Color(0xFFFF8A1E), Color.White)
+)
+
+@Composable fun Spikes(modifier: Modifier, n: Int, inner: Float, color: Color) {
+    Canvas(modifier) {
+        val p = Path(); val r = size.minDimension / 2
+        for (i in 0 until n * 2) {
+            val rad = if (i % 2 == 0) r else r * inner; val a = Math.PI * i / n
+            val x = center.x + rad * cos(a).toFloat(); val y = center.y + rad * sin(a).toFloat()
+            if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+        p.close(); drawPath(p, color)
+    }
+}
+
+fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
+
+@Composable fun NowPlaying(onClose: () -> Unit) {
+    val s = Audio.current ?: return
+    val t = NpThemes[Audio.theme.coerceIn(0, NpThemes.lastIndex)]
+    val view = LocalView.current
+    BackHandler(onBack = onClose)
+    var pos by remember { mutableLongStateOf(0L) }
+    var dur by remember { mutableLongStateOf(0L) }
+    var drag by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(300) } }
+    val rot by rememberInfiniteTransition(label = "r").animateFloat(0f, 360f, infiniteRepeatable(tween(40000, easing = LinearEasing)), label = "rot")
+    val liked = s.id in Audio.liked
+    Column(Modifier.fillMaxSize().background(t.bg).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconBtn(Icons.Rounded.KeyboardArrowDown, tint = t.fg) { onClose() }
+            Text("Now Playing", Modifier.weight(1f), color = t.fg, fontWeight = FontWeight.Bold, fontSize = 14.sp, textAlign = TextAlign.Center)
+            Spacer(Modifier.size(42.dp))
+        }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(Modifier.aspectRatio(1f), contentAlignment = Alignment.Center) {
+                Spikes(Modifier.fillMaxSize().graphicsLayer { rotationZ = rot }, 14, 0.74f, t.burst)
+                Box(Modifier.fillMaxSize(0.62f).graphicsLayer { rotationZ = 45f }.background(t.diamond))
+                Art(s, Modifier.fillMaxSize(0.42f), RoundedCornerShape(2.dp))
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(s.title, color = t.fg, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(s.artist, color = t.fg.copy(0.75f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = t.fg) { Audio.toggleLike(s) }
+        }
+        Slider(
+            value = drag ?: (if (dur > 0) pos.toFloat() / dur else 0f),
+            onValueChange = { drag = it },
+            onValueChangeFinished = { drag?.let { Audio.seekTo((it * dur).toLong()) }; drag = null; view.buzz() },
+            colors = SliderDefaults.colors(thumbColor = t.fg, activeTrackColor = t.fg, inactiveTrackColor = t.fg.copy(0.25f))
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(fmt(pos), color = t.fg.copy(0.75f), fontSize = 12.sp); Text(fmt(dur), color = t.fg.copy(0.75f), fontSize = 12.sp)
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconBtn(Icons.Rounded.Shuffle, tint = if (Audio.shuffle) t.fg else t.fg.copy(0.4f)) { Audio.toggleShuffle() }
+            IconBtn(Icons.Rounded.SkipPrevious, tint = t.fg) { Audio.prev() }
+            Box(Modifier.size(72.dp).clip(CircleShape).background(t.fg).tap(true) { Audio.toggle() }, Alignment.Center) {
+                Icon(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = t.bg, modifier = Modifier.size(38.dp))
+            }
+            IconBtn(Icons.Rounded.SkipNext, tint = t.fg) { Audio.next() }
+            IconBtn(if (Audio.repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                tint = if (Audio.repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) t.fg else t.fg.copy(0.4f)) { Audio.cycleRepeat() }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 16.dp), Arrangement.Center, Alignment.CenterVertically) {
+            Text("Theme", Modifier.padding(end = 10.dp), color = t.fg.copy(0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            NpThemes.forEachIndexed { i, th ->
+                val sel = i == Audio.theme
+                Box(Modifier.padding(horizontal = 6.dp).size(30.dp).clip(CircleShape).background(th.bg)
+                    .border(if (sel) 3.dp else 1.dp, if (sel) t.fg else t.fg.copy(0.3f), CircleShape).tap { Audio.setTheme(i) })
+            }
+        }
     }
 }
 
 @Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit) {
     val items = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
-    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 6.dp).glass(RoundedCornerShape(24.dp), 0.10f).padding(vertical = 10.dp)) {
+    Row(Modifier.fillMaxWidth().background(Color(0xFF1A1412)).navigationBarsPadding().padding(vertical = 8.dp)) {
         items.forEachIndexed { i, (label, icon) ->
             Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(icon, null, tint = if (i == sel) Color.White else Grey, modifier = Modifier.size(26.dp))

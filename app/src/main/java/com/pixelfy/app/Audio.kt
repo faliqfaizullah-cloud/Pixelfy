@@ -43,11 +43,15 @@ object Audio {
     var current by mutableStateOf<Song?>(null)
     var playing by mutableStateOf(false)
     var liked by mutableStateOf(setOf<Long>())
+    var theme by mutableIntStateOf(0)
+    var shuffle by mutableStateOf(false)
+    var repeat by mutableIntStateOf(Player.REPEAT_MODE_OFF)
 
     fun init(c: Context) {
         if (::exo.isInitialized) return
         ctx = c.applicationContext
         liked = ctx.getSharedPreferences("pixelfy", 0).getStringSet("liked", emptySet())!!.map { it.toLong() }.toSet()
+        theme = ctx.getSharedPreferences("pixelfy", 0).getInt("theme", 0)
         exo = ExoPlayer.Builder(ctx)
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
@@ -70,6 +74,13 @@ object Audio {
     }
     fun playLiked(all: List<Song>) { val l = all.filter { it.id in liked }; if (l.isNotEmpty()) play(l, 0) }
     fun toggle() { if (exo.isPlaying) exo.pause() else exo.play() }
+    fun seekTo(ms: Long) = exo.seekTo(ms)
+    fun setTheme(i: Int) { theme = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("theme", i).apply() }
+    fun toggleShuffle() { shuffle = !shuffle; exo.shuffleModeEnabled = shuffle }
+    fun cycleRepeat() {
+        repeat = when (repeat) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF }
+        exo.repeatMode = repeat
+    }
     fun next() = exo.seekToNextMediaItem()
     fun prev() = exo.seekToPreviousMediaItem()
     fun toggleLike(s: Song) {
