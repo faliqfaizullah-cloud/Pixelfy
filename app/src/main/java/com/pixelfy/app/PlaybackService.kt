@@ -1,3 +1,4 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
 package com.pixelfy.app
 
 import android.app.PendingIntent
@@ -13,7 +14,7 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         Audio.init(applicationContext)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, Audio.player).setSessionActivity(open).build()
+        session = MediaSession.Builder(this, Audio.player).setSessionActivity(open).setBitmapLoader(ArtLoader(this)).build()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

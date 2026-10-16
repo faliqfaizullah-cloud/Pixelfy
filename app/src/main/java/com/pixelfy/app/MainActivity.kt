@@ -119,7 +119,6 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-    GlassBackdrop()
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             when (tab) {
@@ -302,7 +301,7 @@ val NpThemes = listOf(
     NpTheme(Color(0xFFF56EC6), Color(0xFFE7FF3C), Color(0xFFFF8A1E), Color(0xFF0B0B0B)),
     NpTheme(Color(0xFF6600B8), Color(0xFFE7FF3C), Color(0xFFFF8A1E), Color.White),
     NpTheme(Color(0xFFFF8A1E), Color(0xFFE7FF3C), Color(0xFF16D957), Color(0xFF0B0B0B)),
-    NpTheme(Color(0xFF121212), Color(0xFF6600B8), Color(0xFFFF8A1E), Color.White)
+    NpTheme(Color.Black, Color(0xFF6600B8), Color(0xFFFF8A1E), Color.White)
 )
 
 @Composable fun Spikes(modifier: Modifier, n: Int, inner: Float, color: Color) {
@@ -382,7 +381,7 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
 
 @Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit) {
     val items = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
-    Row(Modifier.fillMaxWidth().background(Color(0xFF1A1412)).navigationBarsPadding().padding(vertical = 8.dp)) {
+    Row(Modifier.fillMaxWidth().background(Color.Black).navigationBarsPadding().padding(vertical = 8.dp)) {
         items.forEachIndexed { i, (label, icon) ->
             Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(icon, null, tint = if (i == sel) Color.White else Grey, modifier = Modifier.size(26.dp))

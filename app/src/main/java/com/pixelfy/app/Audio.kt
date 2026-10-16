@@ -17,7 +17,7 @@ import androidx.media3.exoplayer.ExoPlayer
 data class Song(val id: Long, val title: String, val artist: String, val albumId: Long, val uri: Uri) {
     val art: Uri get() = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
     fun toItem(): MediaItem = MediaItem.Builder().setMediaId(id.toString()).setUri(uri)
-        .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).setArtworkUri(art).build()).build()
+        .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).setArtworkUri(uri).build()).build()
 }
 
 /** Automatically detects every music file on the device via MediaStore. */
