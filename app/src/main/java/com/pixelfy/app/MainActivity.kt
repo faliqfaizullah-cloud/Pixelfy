@@ -491,11 +491,19 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         NavSec("Your Library", Icons.Rounded.LibraryMusic, listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)), Icons.Rounded.SortByAlpha),
         NavSec("Create", Icons.Rounded.Add, listOf(Color(0xFFFF9A3D), Color(0xFFD1491F)), Icons.Rounded.Refresh)
     )
-    BoxWithConstraints(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp)) {
-        val gap = 8.dp; val c = 52.dp
-        val selW = maxWidth - (c + gap) * (secs.size - 1)
-        Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
-            secs.forEachIndexed { i, sc -> NavItem(sc, i == sel, selW, c, { onSelect(i) }, { onAction(i) }) }
+    val cur = Audio.current
+    val dock = RoundedCornerShape(34.dp)
+    BoxWithConstraints(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
+        val gap = 8.dp; val c = 52.dp; val inner = 6.dp
+        val selW = maxWidth - inner * 2 - (c + gap) * (secs.size - 1)
+        // Frosted dock: blurred album art + light tint + glossy edge
+        Box(Modifier.fillMaxWidth().clip(dock).background(Color(0xFF1C1C1E))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), dock)) {
+            if (cur != null) AsyncImage(model = cur.art, contentDescription = null, modifier = Modifier.matchParentSize().blur(40.dp), contentScale = ContentScale.Crop)
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.White.copy(0.16f), Color.Black.copy(0.35f)))))
+            Row(Modifier.padding(inner), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                secs.forEachIndexed { i, sc -> NavItem(sc, i == sel, selW, c, { onSelect(i) }, { onAction(i) }) }
+            }
         }
     }
 }
@@ -509,11 +517,11 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
     val pill = pillRaw.coerceIn(0f, 1f)
     val wv = w.coerceIn(c, maxOf(c, selW)); val icv = ic.coerceAtLeast(0.dp); val padv = pad.coerceAtLeast(0.dp)
     Box(Modifier.width(wv).height(c).clip(CircleShape)
-        .background(Color(0xFF1C1C1E).copy(alpha = pill))
-        .border(1.dp, Color.White.copy(alpha = 0.10f * pill), CircleShape)
+        .background(Color.Black.copy(alpha = 0.55f * pill))
+        .border(1.dp, Color.White.copy(alpha = 0.16f * pill), CircleShape)
         .then(if (!on) Modifier.tap { onSelect() } else Modifier),
         contentAlignment = Alignment.CenterStart) {
-        Box(Modifier.padding(start = padv).size(icv).clip(CircleShape).background(Brush.linearGradient(sc.tint)), Alignment.Center) {
+        Box(Modifier.padding(start = padv).size(icv).clip(CircleShape).background(Brush.linearGradient(sc.tint)).border(1.dp, Color.White.copy(0.28f), CircleShape), Alignment.Center) {
             Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(icv * 0.5f))
         }
         Text(sc.label, Modifier.padding(start = 56.dp).graphicsLayer { alpha = pill }, color = Color.White, fontSize = 17.sp,
