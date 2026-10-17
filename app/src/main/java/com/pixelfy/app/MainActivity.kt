@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalDensity
@@ -138,6 +139,7 @@ class MainActivity : ComponentActivity() {
     var tab by remember { mutableIntStateOf(0) }
     var full by remember { mutableStateOf(false) }
     var sortAz by remember { mutableStateOf(false) }
+    var screen by remember { mutableIntStateOf(0) }
     val crashFile = remember { File(ctx.filesDir, "crash.txt") }
     var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
     crash?.let { txt ->
@@ -169,7 +171,7 @@ class MainActivity : ComponentActivity() {
                     (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
             }, label = "tab") { t ->
                 when (t) {
-                    0 -> Home(songs)
+                    0 -> Home(songs) { screen = 1 }
                     1 -> SearchScreen(songs)
                     2 -> LibraryScreen(libSongs, sortAz) { sortAz = !sortAz }
                     else -> CreateScreen(songs.size) { tick++ }
@@ -177,9 +179,17 @@ class MainActivity : ComponentActivity() {
             }
         }
         MiniPlayer { full = true }
-        NavBar(tab) { tab = it }
+        NavBar(tab, { tab = it }) { i ->
+            when (i) {
+                0, 3 -> tick++
+                1 -> if (songs.isNotEmpty()) Audio.play(songs.shuffled(), 0)
+                else -> sortAz = !sortAz
+            }
+        }
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
+    AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }) { screen = 0 } }
+    AnimatedVisibility(screen == 2, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { SettingsScreen { screen = 1 } }
     }
 }
 
@@ -234,13 +244,13 @@ class MainActivity : ComponentActivity() {
 }
 
 // ---------- Screens ----------
-@Composable fun Home(songs: List<Song>) {
+@Composable fun Home(songs: List<Song>, onProfile: () -> Unit) {
     var chip by remember { mutableIntStateOf(0) }
     val shown = if (chip == 2) emptyList() else songs
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             Row(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(TileBg), Alignment.Center) { Text("J", color = Green, fontWeight = FontWeight.Bold) }
+                Box(Modifier.size(34.dp).clip(CircleShape).background(TileBg).tap { onProfile() }, Alignment.Center) { Text(Audio.userName.trim().take(1).uppercase().ifEmpty { "J" }, color = Green, fontWeight = FontWeight.Bold) }
                 listOf("All", "Music", "Podcasts").forEachIndexed { i, t -> Chip(t, chip == i) { chip = i } }
             }
         }
@@ -479,8 +489,178 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     }
 }
 
+// ---------- Sections bar styles (chosen in Settings) ----------
+@Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
+    when (Audio.navStyle) {
+        0 -> NavBarClassic(sel, onSelect)
+        1 -> NavBarFluid(sel, onSelect, onAction)
+        else -> NavBarCapsule(sel, onSelect)
+    }
+}
+
+/** Style 1: classic bar with icon, label and a pill highlight. */
+@Composable fun NavBarClassic(sel: Int, onSelect: (Int) -> Unit) {
+    val items = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
+    Row(Modifier.fillMaxWidth().background(Color.Black).navigationBarsPadding().padding(vertical = 8.dp)) {
+        items.forEachIndexed { i, (label, icon) ->
+            val on = i == sel
+            val pill by animateColorAsState(if (on) Green.copy(0.28f) else Color.Transparent, label = "pill")
+            val w by animateDpAsState(if (on) 64.dp else 40.dp, spring(0.6f, 400f), label = "pw")
+            Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(w.coerceAtLeast(0.dp), 32.dp).clip(RoundedCornerShape(16.dp)).background(pill), Alignment.Center) {
+                    Icon(icon, null, tint = if (on) Color.White else Grey, modifier = Modifier.size(24.dp))
+                }
+                Text(label, color = if (on) Color.White else Grey, fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+            }
+        }
+    }
+}
+
+data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color>, val action: ImageVector)
+
+/** Style 2: fluid bubbles with an expanding pill, on a frosted dock. */
+@Composable fun NavBarFluid(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
+    val secs = listOf(
+        NavSec("Home", Icons.Rounded.Home, listOf(Color(0xFF1ED760), Color(0xFF0B7A35)), Icons.Rounded.Refresh),
+        NavSec("Search", Icons.Rounded.Search, listOf(Color(0xFF4DA3FF), Color(0xFF1B4DB3)), Icons.Rounded.Shuffle),
+        NavSec("Your Library", Icons.Rounded.LibraryMusic, listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)), Icons.Rounded.SortByAlpha),
+        NavSec("Create", Icons.Rounded.Add, listOf(Color(0xFFFF9A3D), Color(0xFFD1491F)), Icons.Rounded.Refresh)
+    )
+    val cur = Audio.current
+    val dock = RoundedCornerShape(34.dp)
+    BoxWithConstraints(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
+        val gap = 8.dp; val c = 52.dp; val inner = 6.dp
+        val selW = maxWidth - inner * 2 - (c + gap) * (secs.size - 1)
+        Box(Modifier.fillMaxWidth().clip(dock).background(Color(0xFF1C1C1E))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), dock)) {
+            if (cur != null) AsyncImage(model = cur.art, contentDescription = null, modifier = Modifier.matchParentSize().blur(40.dp), contentScale = ContentScale.Crop)
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.White.copy(0.16f), Color.Black.copy(0.35f)))))
+            Row(Modifier.padding(inner), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                secs.forEachIndexed { i, sc -> NavItem(sc, i == sel, selW, c, { onSelect(i) }, { onAction(i) }) }
+            }
+        }
+    }
+}
+
+@Composable fun NavItem(sc: NavSec, on: Boolean, selW: Dp, c: Dp, onSelect: () -> Unit, onAction: () -> Unit) {
+    val w by animateDpAsState(if (on) selW else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "w")
+    val ic by animateDpAsState(if (on) 32.dp else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "ic")
+    val pad by animateDpAsState(if (on) 10.dp else 0.dp, spring(dampingRatio = 0.78f, stiffness = 260f), label = "pad")
+    val pillRaw by animateFloatAsState(if (on) 1f else 0f, spring(stiffness = 300f), label = "pill")
+    val pill = pillRaw.coerceIn(0f, 1f)
+    val wv = w.coerceIn(c, maxOf(c, selW)); val icv = ic.coerceAtLeast(0.dp); val padv = pad.coerceAtLeast(0.dp)
+    Box(Modifier.width(wv).height(c).clip(CircleShape)
+        .background(Color.Black.copy(alpha = 0.55f * pill))
+        .border(1.dp, Color.White.copy(alpha = 0.16f * pill), CircleShape)
+        .then(if (!on) Modifier.tap { onSelect() } else Modifier),
+        contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.padding(start = padv).size(icv).clip(CircleShape).background(Brush.linearGradient(sc.tint)).border(1.dp, Color.White.copy(0.28f), CircleShape), Alignment.Center) {
+            Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(icv * 0.5f))
+        }
+        Text(sc.label, Modifier.padding(start = 56.dp).graphicsLayer { alpha = pill }, color = Color.White, fontSize = 17.sp,
+            fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(36.dp).graphicsLayer { alpha = pill }.clip(CircleShape)
+            .background(Color(0xFF3A3A3C)).then(if (on) Modifier.tap { onAction() } else Modifier), Alignment.Center) {
+            Icon(sc.action, null, tint = Color.White, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+// ---------- Profile & Settings ----------
+@Composable fun ProfileScreen(songCount: Int, onSettings: () -> Unit, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    var name by remember { mutableStateOf(Audio.userName) }
+    Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconBtn(Icons.Rounded.KeyboardArrowDown) { onClose() }
+            Text("Profile", Modifier.weight(1f), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Spacer(Modifier.size(42.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+        Box(Modifier.size(110.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, Color(0xFF0B7A35)))), Alignment.Center) {
+            Text(name.trim().take(1).uppercase().ifEmpty { "J" }, color = Color.Black, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold)
+        }
+        TextField(name, { name = it.take(20); Audio.saveName(name) }, Modifier.padding(top = 12.dp), singleLine = true,
+            textStyle = TextStyle(color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center),
+            colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                focusedIndicatorColor = Green, unfocusedIndicatorColor = Color.Transparent, cursorColor = Green))
+        Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            listOf("$songCount" to "Songs", "${Audio.liked.size}" to "Liked").forEach { (n, l) ->
+                Column(Modifier.weight(1f).clip(RoundedCornerShape(22.dp)).background(TileBg).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(n, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(l, color = Grey, fontSize = 13.sp)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 16.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onSettings() }.padding(18.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Settings, null, tint = Green)
+            Text("Settings", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Icon(Icons.Rounded.ChevronRight, null, tint = Grey)
+        }
+    }
+}
+
+@Composable fun SettingsScreen(onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val styles = listOf("Classic" to "Icons with labels and a pill highlight",
+        "Fluid" to "Bubbles that stretch into a pill, on a frosted dock",
+        "Capsule" to "Hold and swipe left or right on a glowing capsule")
+    Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconBtn(Icons.Rounded.ArrowBack) { onClose() }
+            Text("Settings", Modifier.weight(1f), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Spacer(Modifier.size(42.dp))
+        }
+        Text("Sections bar style", Modifier.padding(top = 12.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        styles.forEachIndexed { i, (name, desc) ->
+            val sel = Audio.navStyle == i
+            val shape = RoundedCornerShape(22.dp)
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).background(TileBg)
+                .border(if (sel) 2.dp else 0.dp, if (sel) Green else Color.Transparent, shape)
+                .tap { Audio.chooseNavStyle(i) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(name, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(desc, color = Grey, fontSize = 13.sp)
+                    Spacer(Modifier.height(10.dp))
+                    StylePreview(i)
+                }
+                if (sel) Icon(Icons.Rounded.CheckCircle, null, tint = Green, modifier = Modifier.padding(start = 12.dp))
+            }
+        }
+    }
+}
+
+@Composable fun StylePreview(style: Int) {
+    val edge = RoundedCornerShape(14.dp)
+    Box(Modifier.fillMaxWidth().height(54.dp).clip(edge).background(Color.Black).border(1.dp, Color.White.copy(0.08f), edge), Alignment.Center) {
+        when (style) {
+            0 -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(44.dp, 24.dp).clip(RoundedCornerShape(12.dp)).background(Green.copy(0.28f)), Alignment.Center) {
+                    Icon(Icons.Rounded.Home, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                }
+                listOf(Icons.Rounded.Search, Icons.Rounded.LibraryMusic, Icons.Rounded.Add).forEach { Icon(it, null, tint = Grey, modifier = Modifier.size(16.dp)) }
+            }
+            1 -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(32.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF4DA3FF), Color(0xFF1B4DB3)))))
+                Box(Modifier.size(96.dp, 32.dp).clip(CircleShape).background(Color(0xFF1C1C1E)).border(1.dp, Color.White.copy(0.16f), CircleShape), Alignment.CenterStart) {
+                    Box(Modifier.padding(start = 4.dp).size(24.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, Color(0xFF0B7A35)))))
+                    Box(Modifier.padding(start = 36.dp).size(36.dp, 6.dp).clip(CircleShape).background(Color.White.copy(0.7f)))
+                }
+                Box(Modifier.size(32.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)))))
+            }
+            else -> Box(Modifier.size(110.dp, 32.dp).clip(CircleShape)
+                .background(Brush.verticalGradient(listOf(Color(0xFF2B2B3B), Color(0xFF1D1D29))))
+                .border(1.5.dp, Brush.verticalGradient(listOf(Color(0xFF8E8EB8), Color(0xFF4B4B6C))), CircleShape), Alignment.Center) {
+                Box(Modifier.size(26.dp, 5.dp).clip(CircleShape).background(Color(0xFF575C70)))
+            }
+        }
+    }
+}
+
 /** Capsule sections bar. Hold and swipe left/right on the capsule to switch sections; tap to peek at where you are. */
-@Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit) {
+@Composable fun NavBarCapsule(sel: Int, onSelect: (Int) -> Unit) {
     val secs = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
     val view = LocalView.current
     val step = with(LocalDensity.current) { 44.dp.toPx() }
