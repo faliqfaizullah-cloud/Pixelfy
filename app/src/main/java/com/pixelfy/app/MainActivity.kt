@@ -385,18 +385,24 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
             var total = 0f
             detectVerticalDragGestures(onDragStart = { total = 0f }, onDragEnd = { if (total > 180f) onClose() }) { _, d -> total += d }
         }) {
-        Crossfade(targetState = s, animationSpec = tween(600), label = "art") { song ->
+        // Animated full-screen cover: slow zoom + drift (Ken Burns) while playing, eases still when paused
+        val tr = rememberInfiniteTransition(label = "cover")
+        val zoom by tr.animateFloat(1.08f, 1.24f, infiniteRepeatable(tween(16000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "z")
+        val dx by tr.animateFloat(-0.03f, 0.03f, infiniteRepeatable(tween(21000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "dx")
+        val dy by tr.animateFloat(-0.02f, 0.02f, infiniteRepeatable(tween(27000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "dy")
+        val live by animateFloatAsState(if (Audio.playing) 1f else 0f, tween(900), label = "live")
+        Crossfade(targetState = s, animationSpec = tween(700), label = "art") { song ->
+            val intro = remember { Animatable(1.18f) }
+            LaunchedEffect(Unit) { intro.animateTo(1f, tween(1100, easing = FastOutSlowInEasing)) }
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF3A3A3A), Color.Black)))) {
-                AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize().blur(70.dp), contentScale = ContentScale.Crop)
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(0.25f), Color.Black.copy(0.6f)))))
                 AsyncImage(model = song.art, contentDescription = null,
-                    modifier = Modifier.fillMaxWidth().fillMaxHeight(0.68f)
-                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(Brush.verticalGradient(0.55f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-                        },
-                    contentScale = ContentScale.Crop)
+                    modifier = Modifier.fillMaxSize().graphicsLayer {
+                        val k = (1.08f + (zoom - 1.08f) * live) * intro.value
+                        scaleX = k; scaleY = k
+                        translationX = dx * size.width * live; translationY = dy * size.height * live
+                    }, contentScale = ContentScale.Crop)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                    0f to Color.Black.copy(0.35f), 0.2f to Color.Transparent, 0.5f to Color.Transparent, 1f to Color.Black.copy(0.92f))))
             }
         }
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
