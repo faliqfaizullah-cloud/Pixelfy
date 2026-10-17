@@ -3,6 +3,8 @@ package com.pixelfy.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
+import java.io.File
 import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import android.view.View
@@ -116,6 +118,11 @@ fun View.buzz(strong: Boolean = false) {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val old = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { th, e ->
+            try { File(filesDir, "crash.txt").writeText(Log.getStackTraceString(e)) } catch (_: Exception) {}
+            old?.uncaughtException(th, e)
+        }
         enableEdgeToEdge()
         Audio.init(applicationContext)
         setContent { MaterialTheme(colorScheme = darkColorScheme(primary = Green, background = Bg)) { Root() } }
@@ -128,6 +135,14 @@ class MainActivity : ComponentActivity() {
     var tab by remember { mutableIntStateOf(0) }
     var full by remember { mutableStateOf(false) }
     var sortAz by remember { mutableStateOf(false) }
+    val crashFile = remember { File(ctx.filesDir, "crash.txt") }
+    var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
+    crash?.let { txt ->
+        AlertDialog(onDismissRequest = { crashFile.delete(); crash = null },
+            confirmButton = { TextButton(onClick = { crashFile.delete(); crash = null }) { Text("Close") } },
+            title = { Text("Pixelfy crashed last time") },
+            text = { Text(txt.take(1200), fontSize = 11.sp) })
+    }
     var tick by remember { mutableIntStateOf(0) }
     val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED) }
@@ -489,14 +504,17 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
     val w by animateDpAsState(if (on) selW else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "w")
     val ic by animateDpAsState(if (on) 32.dp else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "ic")
     val pad by animateDpAsState(if (on) 10.dp else 0.dp, spring(dampingRatio = 0.78f, stiffness = 260f), label = "pad")
-    val pill by animateFloatAsState(if (on) 1f else 0f, spring(stiffness = 300f), label = "pill")
-    Box(Modifier.width(w).height(c).clip(CircleShape)
+    val pillRaw by animateFloatAsState(if (on) 1f else 0f, spring(stiffness = 300f), label = "pill")
+    // springs can overshoot: clamp everything so padding/size/alpha never go out of range
+    val pill = pillRaw.coerceIn(0f, 1f)
+    val wv = w.coerceIn(c, maxOf(c, selW)); val icv = ic.coerceAtLeast(0.dp); val padv = pad.coerceAtLeast(0.dp)
+    Box(Modifier.width(wv).height(c).clip(CircleShape)
         .background(Color(0xFF1C1C1E).copy(alpha = pill))
         .border(1.dp, Color.White.copy(alpha = 0.10f * pill), CircleShape)
         .then(if (!on) Modifier.tap { onSelect() } else Modifier),
         contentAlignment = Alignment.CenterStart) {
-        Box(Modifier.padding(start = pad).size(ic).clip(CircleShape).background(Brush.linearGradient(sc.tint)), Alignment.Center) {
-            Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(ic * 0.5f))
+        Box(Modifier.padding(start = padv).size(icv).clip(CircleShape).background(Brush.linearGradient(sc.tint)), Alignment.Center) {
+            Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(icv * 0.5f))
         }
         Text(sc.label, Modifier.padding(start = 56.dp).graphicsLayer { alpha = pill }, color = Color.White, fontSize = 17.sp,
             fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
