@@ -25,7 +25,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.Crossfade
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -121,6 +127,7 @@ class MainActivity : ComponentActivity() {
     var songs by remember { mutableStateOf(emptyList<Song>()) }
     var tab by remember { mutableIntStateOf(0) }
     var full by remember { mutableStateOf(false) }
+    var sortAz by remember { mutableStateOf(false) }
     var tick by remember { mutableIntStateOf(0) }
     val perm = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED) }
@@ -137,15 +144,28 @@ class MainActivity : ComponentActivity() {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
-            when (tab) {
-                0 -> Home(songs)
-                1 -> SearchScreen(songs)
-                2 -> LibraryScreen(songs)
-                else -> CreateScreen(songs.size) { tick++ }
+            val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
+            AnimatedContent(tab, transitionSpec = {
+                val d = if (targetState > initialState) 1 else -1
+                (slideInHorizontally(spring(stiffness = 300f)) { it / 6 * d } + fadeIn(tween(220))) togetherWith
+                    (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
+            }, label = "tab") { t ->
+                when (t) {
+                    0 -> Home(songs)
+                    1 -> SearchScreen(songs)
+                    2 -> LibraryScreen(libSongs)
+                    else -> CreateScreen(songs.size) { tick++ }
+                }
             }
         }
         MiniPlayer { full = true }
-        NavBar(tab) { tab = it }
+        NavBar(tab, { tab = it }) { i ->
+            when (i) {
+                0, 3 -> tick++
+                1 -> if (songs.isNotEmpty()) Audio.play(songs.shuffled(), 0)
+                else -> sortAz = !sortAz
+            }
+        }
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
     }
@@ -446,19 +466,43 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     }
 }
 
-@Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit) {
-    val items = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
-    Row(Modifier.fillMaxWidth().background(Color.Black).navigationBarsPadding().padding(vertical = 8.dp)) {
-        items.forEachIndexed { i, (label, icon) ->
-            val on = i == sel
-            val pill by animateColorAsState(if (on) Green.copy(0.28f) else Color.Transparent, label = "pill")
-            val w by animateDpAsState(if (on) 64.dp else 40.dp, spring(0.6f, 400f), label = "pw")
-            Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.size(w, 32.dp).clip(RoundedCornerShape(16.dp)).background(pill), Alignment.Center) {
-                    Icon(icon, null, tint = if (on) Color.White else Grey, modifier = Modifier.size(24.dp))
-                }
-                Text(label, color = if (on) Color.White else Grey, fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
-            }
+data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color>, val action: ImageVector)
+
+/** Fluid sections bar: the active section is a wide pill (icon + name + action), the others are round bubbles. */
+@Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
+    val secs = listOf(
+        NavSec("Home", Icons.Rounded.Home, listOf(Color(0xFF1ED760), Color(0xFF0B7A35)), Icons.Rounded.Refresh),
+        NavSec("Search", Icons.Rounded.Search, listOf(Color(0xFF4DA3FF), Color(0xFF1B4DB3)), Icons.Rounded.Shuffle),
+        NavSec("Your Library", Icons.Rounded.LibraryMusic, listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)), Icons.Rounded.SortByAlpha),
+        NavSec("Create", Icons.Rounded.Add, listOf(Color(0xFFFF9A3D), Color(0xFFD1491F)), Icons.Rounded.Refresh)
+    )
+    BoxWithConstraints(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp)) {
+        val gap = 8.dp; val c = 52.dp
+        val selW = maxWidth - (c + gap) * (secs.size - 1)
+        Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+            secs.forEachIndexed { i, sc -> NavItem(sc, i == sel, selW, c, { onSelect(i) }, { onAction(i) }) }
+        }
+    }
+}
+
+@Composable fun NavItem(sc: NavSec, on: Boolean, selW: Dp, c: Dp, onSelect: () -> Unit, onAction: () -> Unit) {
+    val w by animateDpAsState(if (on) selW else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "w")
+    val ic by animateDpAsState(if (on) 32.dp else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "ic")
+    val pad by animateDpAsState(if (on) 10.dp else 0.dp, spring(dampingRatio = 0.78f, stiffness = 260f), label = "pad")
+    val pill by animateFloatAsState(if (on) 1f else 0f, spring(stiffness = 300f), label = "pill")
+    Box(Modifier.width(w).height(c).clip(CircleShape)
+        .background(Color(0xFF1C1C1E).copy(alpha = pill))
+        .border(1.dp, Color.White.copy(alpha = 0.10f * pill), CircleShape)
+        .then(if (!on) Modifier.tap { onSelect() } else Modifier),
+        contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.padding(start = pad).size(ic).clip(CircleShape).background(Brush.linearGradient(sc.tint)), Alignment.Center) {
+            Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(ic * 0.5f))
+        }
+        Text(sc.label, Modifier.padding(start = 56.dp).graphicsLayer { alpha = pill }, color = Color.White, fontSize = 17.sp,
+            fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
+        Box(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(36.dp).graphicsLayer { alpha = pill }.clip(CircleShape)
+            .background(Color(0xFF3A3A3C)).then(if (on) Modifier.tap { onAction() } else Modifier), Alignment.Center) {
+            Icon(sc.action, null, tint = Color.White, modifier = Modifier.size(18.dp))
         }
     }
 }
