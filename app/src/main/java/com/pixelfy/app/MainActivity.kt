@@ -28,6 +28,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -168,19 +171,13 @@ class MainActivity : ComponentActivity() {
                 when (t) {
                     0 -> Home(songs)
                     1 -> SearchScreen(songs)
-                    2 -> LibraryScreen(libSongs)
+                    2 -> LibraryScreen(libSongs, sortAz) { sortAz = !sortAz }
                     else -> CreateScreen(songs.size) { tick++ }
                 }
             }
         }
         MiniPlayer { full = true }
-        NavBar(tab, { tab = it }) { i ->
-            when (i) {
-                0, 3 -> tick++
-                1 -> if (songs.isNotEmpty()) Audio.play(songs.shuffled(), 0)
-                else -> sortAz = !sortAz
-            }
-        }
+        NavBar(tab) { tab = it }
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
     }
@@ -302,10 +299,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable fun LibraryScreen(songs: List<Song>) {
+@Composable fun LibraryScreen(songs: List<Song>, sortAz: Boolean, onSort: () -> Unit) {
     Column(Modifier.statusBarsPadding().padding(top = 12.dp)) {
         Text("Your Library", Modifier.padding(horizontal = 16.dp), color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold)
         Text("${songs.size} songs on this device", Modifier.padding(16.dp, 4.dp, 16.dp, 8.dp), color = Grey)
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) { Chip(if (sortAz) "A–Z" else "Recently added", true) { onSort() } }
         LazyColumn { items(songs) { SongRow(it, songs) } }
     }
 }
@@ -481,54 +479,58 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     }
 }
 
-data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color>, val action: ImageVector)
-
-/** Fluid sections bar: the active section is a wide pill (icon + name + action), the others are round bubbles. */
-@Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
-    val secs = listOf(
-        NavSec("Home", Icons.Rounded.Home, listOf(Color(0xFF1ED760), Color(0xFF0B7A35)), Icons.Rounded.Refresh),
-        NavSec("Search", Icons.Rounded.Search, listOf(Color(0xFF4DA3FF), Color(0xFF1B4DB3)), Icons.Rounded.Shuffle),
-        NavSec("Your Library", Icons.Rounded.LibraryMusic, listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)), Icons.Rounded.SortByAlpha),
-        NavSec("Create", Icons.Rounded.Add, listOf(Color(0xFFFF9A3D), Color(0xFFD1491F)), Icons.Rounded.Refresh)
-    )
-    val cur = Audio.current
-    val dock = RoundedCornerShape(34.dp)
-    BoxWithConstraints(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
-        val gap = 8.dp; val c = 52.dp; val inner = 6.dp
-        val selW = maxWidth - inner * 2 - (c + gap) * (secs.size - 1)
-        // Frosted dock: blurred album art + light tint + glossy edge
-        Box(Modifier.fillMaxWidth().clip(dock).background(Color(0xFF1C1C1E))
-            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), dock)) {
-            if (cur != null) AsyncImage(model = cur.art, contentDescription = null, modifier = Modifier.matchParentSize().blur(40.dp), contentScale = ContentScale.Crop)
-            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.White.copy(0.16f), Color.Black.copy(0.35f)))))
-            Row(Modifier.padding(inner), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                secs.forEachIndexed { i, sc -> NavItem(sc, i == sel, selW, c, { onSelect(i) }, { onAction(i) }) }
+/** Capsule sections bar. Hold and swipe left/right on the capsule to switch sections; tap to peek at where you are. */
+@Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit) {
+    val secs = listOf("Home" to Icons.Rounded.Home, "Search" to Icons.Rounded.Search, "Your Library" to Icons.Rounded.LibraryMusic, "Create" to Icons.Rounded.Add)
+    val view = LocalView.current
+    val step = with(LocalDensity.current) { 44.dp.toPx() }
+    var pressed by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf(false) }
+    var peek by remember { mutableStateOf(false) }
+    var peekTick by remember { mutableIntStateOf(0) }
+    var acc by remember { mutableFloatStateOf(0f) }
+    val curSel by rememberUpdatedState(sel)
+    val pick by rememberUpdatedState(onSelect)
+    LaunchedEffect(peekTick) { if (peekTick > 0) { peek = true; delay(1400); peek = false } }
+    val open = pressed || dragging || peek
+    val w by animateDpAsState(if (open) 300.dp else 164.dp, spring(dampingRatio = 0.72f, stiffness = 320f), label = "w")
+    val h by animateDpAsState(if (open) 58.dp else 50.dp, spring(dampingRatio = 0.72f, stiffness = 320f), label = "h")
+    val dash by animateFloatAsState(if (open) 0f else 1f, tween(160), label = "dash")
+    val items by animateFloatAsState(if (open) 1f else 0f, tween(220), label = "items")
+    val glow = Color(0xFF8A8AC8)
+    Box(Modifier.fillMaxWidth().background(Color(0xFF1E1F25)).navigationBarsPadding().padding(top = 10.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(w.coerceAtLeast(0.dp), h.coerceAtLeast(0.dp))
+            .shadow(16.dp, CircleShape, clip = false, ambientColor = glow, spotColor = glow)
+            .clip(CircleShape)
+            .background(Brush.verticalGradient(listOf(Color(0xFF2B2B3B), Color(0xFF1D1D29))))
+            .border(1.5.dp, Brush.verticalGradient(listOf(Color(0xFF8E8EB8), Color(0xFF4B4B6C))), CircleShape)
+            .pointerInput(Unit) {
+                detectTapGestures(onPress = { pressed = true; view.buzz(); tryAwaitRelease(); pressed = false }, onTap = { peekTick++ })
             }
-        }
-    }
-}
-
-@Composable fun NavItem(sc: NavSec, on: Boolean, selW: Dp, c: Dp, onSelect: () -> Unit, onAction: () -> Unit) {
-    val w by animateDpAsState(if (on) selW else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "w")
-    val ic by animateDpAsState(if (on) 32.dp else c, spring(dampingRatio = 0.78f, stiffness = 260f), label = "ic")
-    val pad by animateDpAsState(if (on) 10.dp else 0.dp, spring(dampingRatio = 0.78f, stiffness = 260f), label = "pad")
-    val pillRaw by animateFloatAsState(if (on) 1f else 0f, spring(stiffness = 300f), label = "pill")
-    // springs can overshoot: clamp everything so padding/size/alpha never go out of range
-    val pill = pillRaw.coerceIn(0f, 1f)
-    val wv = w.coerceIn(c, maxOf(c, selW)); val icv = ic.coerceAtLeast(0.dp); val padv = pad.coerceAtLeast(0.dp)
-    Box(Modifier.width(wv).height(c).clip(CircleShape)
-        .background(Color.Black.copy(alpha = 0.55f * pill))
-        .border(1.dp, Color.White.copy(alpha = 0.16f * pill), CircleShape)
-        .then(if (!on) Modifier.tap { onSelect() } else Modifier),
-        contentAlignment = Alignment.CenterStart) {
-        Box(Modifier.padding(start = padv).size(icv).clip(CircleShape).background(Brush.linearGradient(sc.tint)).border(1.dp, Color.White.copy(0.28f), CircleShape), Alignment.Center) {
-            Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(icv * 0.5f))
-        }
-        Text(sc.label, Modifier.padding(start = 56.dp).graphicsLayer { alpha = pill }, color = Color.White, fontSize = 17.sp,
-            fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
-        Box(Modifier.align(Alignment.CenterEnd).padding(end = 8.dp).size(36.dp).graphicsLayer { alpha = pill }.clip(CircleShape)
-            .background(Color(0xFF3A3A3C)).then(if (on) Modifier.tap { onAction() } else Modifier), Alignment.Center) {
-            Icon(sc.action, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { acc = 0f; dragging = true },
+                    onDragEnd = { dragging = false; peekTick++ },
+                    onDragCancel = { dragging = false }
+                ) { change, d ->
+                    change.consume(); acc += d
+                    if (acc > step && curSel < secs.lastIndex) { acc = 0f; pick(curSel + 1); view.buzz(true); peekTick++ }
+                    else if (acc < -step && curSel > 0) { acc = 0f; pick(curSel - 1); view.buzz(true); peekTick++ }
+                }
+            }, contentAlignment = Alignment.Center) {
+            Box(Modifier.size(40.dp, 8.dp).graphicsLayer { alpha = dash.coerceIn(0f, 1f) }.clip(RoundedCornerShape(4.dp)).background(Color(0xFF575C70)))
+            Row(Modifier.fillMaxSize().padding(horizontal = 8.dp).graphicsLayer { alpha = items.coerceIn(0f, 1f) },
+                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                secs.forEachIndexed { i, (label, icon) ->
+                    val on = i == sel
+                    val bg by animateColorAsState(if (on) Color.White.copy(0.16f) else Color.Transparent, label = "b")
+                    Row(Modifier.height(40.dp).animateContentSize(spring(dampingRatio = 0.8f, stiffness = 400f)).clip(CircleShape).background(bg)
+                        .padding(horizontal = if (on) 12.dp else 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(icon, label, tint = if (on) Color.White else Color(0xFF8A8FA3), modifier = Modifier.size(22.dp))
+                        if (on) Text(label, Modifier.padding(start = 6.dp), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
         }
     }
 }
