@@ -26,6 +26,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.animation.core.*
@@ -359,9 +362,14 @@ val NpThemes = listOf(
 
 fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
 
+@Composable fun WideBtn(icon: ImageVector, modifier: Modifier, onClick: () -> Unit) =
+    Box(modifier.fillMaxHeight().clip(RoundedCornerShape(26.dp)).background(Color.White.copy(0.16f)).tap { onClick() }, Alignment.Center) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(30.dp))
+    }
+
+/** Full-screen player: full-bleed album art fading into a blurred, tinted background. */
 @Composable fun NowPlaying(onClose: () -> Unit) {
     val s = Audio.current ?: return
-    val t = NpThemes[Audio.theme.coerceIn(0, NpThemes.lastIndex)]
     val view = LocalView.current
     BackHandler(onBack = onClose)
     var pos by remember { mutableLongStateOf(0L) }
@@ -369,50 +377,64 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     var drag by remember { mutableStateOf<Float?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(200) } }
-    val rot by rememberInfiniteTransition(label = "r").animateFloat(0f, 360f, infiniteRepeatable(tween(40000, easing = LinearEasing)), label = "rot")
     val liked = s.id in Audio.liked
-    Column(Modifier.fillMaxSize().background(t.bg).statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconBtn(Icons.Rounded.KeyboardArrowDown, tint = t.fg) { onClose() }
-            Text("Now Playing", Modifier.weight(1f), color = t.fg, fontWeight = FontWeight.Bold, fontSize = 14.sp, textAlign = TextAlign.Center)
-            IconBtn(Icons.Rounded.Subject, tint = if (showLyrics) t.fg else t.fg.copy(0.55f)) { showLyrics = !showLyrics }
-        }
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (showLyrics) LyricsView(s, pos, t) else Box(Modifier.aspectRatio(1f), contentAlignment = Alignment.Center) {
-                Spikes(Modifier.fillMaxSize().graphicsLayer { rotationZ = rot }, 14, 0.74f, t.burst)
-                Box(Modifier.fillMaxSize(0.62f).graphicsLayer { rotationZ = 45f }.background(t.diamond))
-                Art(s, Modifier.fillMaxSize(0.42f), RoundedCornerShape(2.dp))
+    val white = Color.White
+    val lt = NpTheme(Color.Transparent, white, white, white)
+    Box(Modifier.fillMaxSize().background(Color.Black)
+        .pointerInput(Unit) {
+            var total = 0f
+            detectVerticalDragGestures(onDragStart = { total = 0f }, onDragEnd = { if (total > 180f) onClose() }) { _, d -> total += d }
+        }) {
+        Crossfade(targetState = s, animationSpec = tween(600), label = "art") { song ->
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF3A3A3A), Color.Black)))) {
+                AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize().blur(70.dp), contentScale = ContentScale.Crop)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(0.25f), Color.Black.copy(0.6f)))))
+                AsyncImage(model = song.art, contentDescription = null,
+                    modifier = Modifier.fillMaxWidth().fillMaxHeight(0.68f)
+                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(Brush.verticalGradient(0.55f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                        },
+                    contentScale = ContentScale.Crop)
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(s.title, color = t.fg, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(s.artist, color = t.fg.copy(0.75f), fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Music", Modifier.weight(1f).padding(start = 4.dp), color = white, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                IconBtn(Icons.Rounded.KeyboardArrowDown, tint = white) { onClose() }
             }
-            IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = t.fg) { Audio.toggleLike(s) }
-        }
-        WavySeek(drag ?: (if (dur > 0) pos.toFloat() / dur else 0f), Audio.playing, t.fg, { drag = it },
-            { drag?.let { Audio.seekTo((it * dur).toLong()) }; drag = null; view.buzz() })
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(fmt(pos), color = t.fg.copy(0.75f), fontSize = 12.sp); Text(fmt(dur), color = t.fg.copy(0.75f), fontSize = 12.sp)
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconBtn(Icons.Rounded.Shuffle, tint = if (Audio.shuffle) t.fg else t.fg.copy(0.4f)) { Audio.toggleShuffle() }
-            TonalBtn(Icons.Rounded.SkipPrevious, t.fg) { Audio.prev() }
-            val corner by animateDpAsState(if (Audio.playing) 24.dp else 40.dp, spring(0.5f, 300f), label = "pc")
-            Box(Modifier.size(80.dp, 72.dp).clip(RoundedCornerShape(corner)).background(t.fg).tap(true) { Audio.toggle() }, Alignment.Center) {
-                Icon(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = t.bg, modifier = Modifier.size(38.dp))
+            Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
+                if (showLyrics) Box(Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Color.Black.copy(0.45f)).padding(horizontal = 16.dp)) {
+                    LyricsView(s, pos, lt)
+                }
             }
-            TonalBtn(Icons.Rounded.SkipNext, t.fg) { Audio.next() }
-            IconBtn(if (Audio.repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
-                tint = if (Audio.repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) t.fg else t.fg.copy(0.4f)) { Audio.cycleRepeat() }
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 16.dp), Arrangement.Center, Alignment.CenterVertically) {
-            Text("Theme", Modifier.padding(end = 10.dp), color = t.fg.copy(0.7f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            NpThemes.forEachIndexed { i, th ->
-                val sel = i == Audio.theme
-                Box(Modifier.padding(horizontal = 6.dp).size(30.dp).clip(CircleShape).background(th.bg)
-                    .border(if (sel) 3.dp else 1.dp, if (sel) t.fg else t.fg.copy(0.3f), CircleShape).tap { Audio.chooseTheme(i) })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBtn(Icons.Rounded.Subject, tint = if (showLyrics) Green else white) { showLyrics = !showLyrics }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(s.title, color = white, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(s.artist, color = white.copy(0.65f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = if (liked) Green else white) { Audio.toggleLike(s) }
+            }
+            WavySeek(drag ?: (if (dur > 0) pos.toFloat() / dur else 0f), Audio.playing, white, { drag = it },
+                { drag?.let { Audio.seekTo((it * dur).toLong()) }; drag = null; view.buzz() })
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(fmt(pos), color = white, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row {
+                    IconBtn(Icons.Rounded.Shuffle, tint = if (Audio.shuffle) Green else white.copy(0.6f)) { Audio.toggleShuffle() }
+                    IconBtn(if (Audio.repeat == androidx.media3.common.Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                        tint = if (Audio.repeat != androidx.media3.common.Player.REPEAT_MODE_OFF) Green else white.copy(0.6f)) { Audio.cycleRepeat() }
+                }
+                Text(fmt(dur), color = white.copy(0.7f), fontSize = 12.sp)
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp).height(84.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WideBtn(Icons.Rounded.SkipPrevious, Modifier.weight(1f)) { Audio.prev() }
+                val corner by animateDpAsState(if (Audio.playing) 28.dp else 42.dp, spring(0.5f, 300f), label = "pc")
+                Box(Modifier.weight(1.15f).fillMaxHeight().clip(RoundedCornerShape(corner)).background(white.copy(0.30f)).tap(true) { Audio.toggle() }, Alignment.Center) {
+                    Icon(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = white, modifier = Modifier.size(34.dp))
+                }
+                WideBtn(Icons.Rounded.SkipNext, Modifier.weight(1f)) { Audio.next() }
             }
         }
     }
