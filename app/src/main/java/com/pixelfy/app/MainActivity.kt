@@ -498,7 +498,7 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     val dash by animateFloatAsState(if (open) 0f else 1f, tween(160), label = "dash")
     val items by animateFloatAsState(if (open) 1f else 0f, tween(220), label = "items")
     val glow = Color(0xFF8A8AC8)
-    Box(Modifier.fillMaxWidth().background(Color(0xFF1E1F25)).navigationBarsPadding().padding(top = 10.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 10.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
         Box(Modifier.size(w.coerceAtLeast(0.dp), h.coerceAtLeast(0.dp))
             .shadow(16.dp, CircleShape, clip = false, ambientColor = glow, spotColor = glow)
             .clip(CircleShape)
