@@ -338,25 +338,41 @@ class MainActivity : ComponentActivity() {
 
 @Composable fun MiniPlayer(onOpen: () -> Unit) {
     val s = Audio.current ?: return
+    val view = LocalView.current
     val liked = s.id in Audio.liked
-    val shape = RoundedCornerShape(28.dp)
-    // Frosted glass: blurred album art + light tint + glossy edge
-    Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).clip(shape).background(Color(0xFF222222))
-        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), shape)) {
-        AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.matchParentSize().blur(40.dp), contentScale = ContentScale.Crop)
-        Box(Modifier.matchParentSize().background(Brush.linearGradient(listOf(Color.White.copy(0.20f), Color.Black.copy(0.40f)))))
-        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+    val shape = RoundedCornerShape(16.dp)
+    var pos by remember { mutableLongStateOf(0L) }
+    var dur by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(500) } }
+    // Frosted glass bar: blurred album art + tint, thumbnail, title/artist, device / like / play, thin progress line.
+    // Swipe left or right on the bar to skip tracks; tap the song to open the full player.
+    Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).clip(shape).background(Color(0xFF222222))
+        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), shape)
+        .pointerInput(Unit) {
+            var acc = 0f
+            detectHorizontalDragGestures(
+                onDragStart = { acc = 0f },
+                onDragEnd = { if (acc < -90f) { Audio.next(); view.buzz(true) } else if (acc > 90f) { Audio.prev(); view.buzz(true) } }
+            ) { _, d -> acc += d }
+        }) {
+        Crossfade(targetState = s, modifier = Modifier.matchParentSize(), animationSpec = tween(500), label = "mp") { song ->
+            AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize().blur(48.dp), contentScale = ContentScale.Crop)
+        }
+        Box(Modifier.matchParentSize().background(Brush.horizontalGradient(listOf(Color.White.copy(0.20f), Color.Black.copy(0.45f)))))
+        Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).tap { onOpen() }, verticalAlignment = Alignment.CenterVertically) {
-                Art(s, Modifier.size(40.dp), RoundedCornerShape(4.dp))
-                Column(Modifier.padding(horizontal = 10.dp)) {
-                    Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(s.artist, color = Color.White.copy(0.75f), fontSize = 12.sp, maxLines = 1)
+                Art(s, Modifier.size(46.dp), RoundedCornerShape(6.dp))
+                Column(Modifier.padding(horizontal = 12.dp)) {
+                    Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(s.artist, color = Color.White.copy(0.7f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            IconBtn(Icons.Rounded.SkipPrevious) { Audio.prev() }
+            IconBtn(Icons.Rounded.Cast) { onOpen() }
             IconBtn(if (liked) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, tint = if (liked) Green else Color.White) { Audio.toggleLike(s) }
             IconBtn(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, strong = true) { Audio.toggle() }
-            IconBtn(Icons.Rounded.SkipNext) { Audio.next() }
+        }
+        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(Color.White.copy(0.25f))) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f).background(Color.White))
         }
     }
 }
