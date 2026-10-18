@@ -514,93 +514,61 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
 }
 
 // ---------- Opening animation ----------
-/** Immersive intro: skyline pushes in, title powers on like neon, light sweeps across it, beacons pulse, windows twinkle. Tap to skip. */
+const val FLYER_ASPECT = 0.7521f
+
+/** Intro: the flyer collage is cut into slats that swipe in from alternating sides with motion blur, breathe, then swipe out. Tap to skip. */
 @Composable fun Splash(onDone: () -> Unit) {
     val view = LocalView.current
-    val painter = painterResource(R.drawable.welcome)
-    val city = remember { Animatable(0f) }
-    val push = remember { Animatable(0f) }
-    val title = remember { Animatable(0f) }
-    val tscale = remember { Animatable(0.86f) }
-    val sweep = remember { Animatable(-0.3f) }
-    val exit = remember { Animatable(0f) }
+    val painter = painterResource(R.drawable.flyers)
+    val n = 5
+    val pIn = remember { List(n) { Animatable(0f) } }
+    val pOut = remember { List(n) { Animatable(0f) } }
+    val hold = remember { Animatable(0f) }
     var skip by remember { mutableStateOf(false) }
     BackHandler { skip = true }
-
-    val tr = rememberInfiniteTransition(label = "sp")
-    val t by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "t")
-    val pulse by tr.animateFloat(0.55f, 1f, infiniteRepeatable(tween(1500, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
-    val pts = remember { val rnd = Random(7); List(60) { floatArrayOf(rnd.nextFloat(), 0.40f + rnd.nextFloat() * 0.53f, rnd.nextFloat(), (1 + rnd.nextInt(3)).toFloat(), 1.2f + rnd.nextFloat() * 2.2f) } }
+    val easeOutExpo = remember { CubicBezierEasing(0.16f, 1f, 0.3f, 1f) }
+    val easeInExpo = remember { CubicBezierEasing(0.7f, 0f, 0.84f, 0f) }
 
     LaunchedEffect(Unit) {
         coroutineScope {
-            launch { city.animateTo(1f, tween(1700, easing = FastOutSlowInEasing)) }
-            launch { push.animateTo(1f, tween(5200, easing = LinearOutSlowInEasing)) }
-            launch {
-                delay(600); view.buzz(true)
-                title.animateTo(0.9f, tween(60)); title.animateTo(0.15f, tween(70)); title.animateTo(1f, tween(80))
-                title.animateTo(0.35f, tween(60)); title.animateTo(1f, tween(120)); view.buzz()
+            for (i in 0 until n) launch {
+                delay(i * 90L); if (i == 0) view.buzz(true)
+                pIn[i].animateTo(1f, tween(900, easing = easeOutExpo))
+                if (i == n - 1) view.buzz()
             }
-            launch { delay(600); tscale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 120f)) }
-            launch { delay(1700); sweep.animateTo(1.3f, tween(1200, easing = FastOutSlowInEasing)); view.buzz() }
+            launch { hold.animateTo(1f, tween(3600, easing = LinearEasing)) }
         }
     }
     LaunchedEffect(skip) {
-        if (!skip) delay(4600)
+        if (!skip) delay(3000)
         view.buzz(true)
-        exit.animateTo(1f, tween(if (skip) 320 else 700, easing = FastOutSlowInEasing))
+        val dur = if (skip) 380 else 700; val gap = if (skip) 30L else 80L
+        coroutineScope { for (i in 0 until n) launch { delay(i * gap); pOut[i].animateTo(1f, tween(dur, easing = easeInExpo)) } }
         onDone()
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)
-        .graphicsLayer { val e = exit.value; scaleX = 1f + e * 0.3f; scaleY = 1f + e * 0.3f; alpha = 1f - e }
-        .pointerInput(Unit) { detectTapGestures { skip = true } }) {
-        // Skyline: fades in from black and slowly pushes toward you (anchored under the title)
-        Box(Modifier.fillMaxSize().graphicsLayer {
-            val z = 1f + 0.18f * push.value
-            scaleX = z; scaleY = z; transformOrigin = TransformOrigin(0.5f, 0.274f)
-            translationX = (push.value - 0.5f) * -30f; alpha = city.value
-        }) {
-            Image(painter, null, Modifier.fillMaxSize().drawWithContent { clipRect(top = size.height * 0.274f) { this@drawWithContent.drawContent() } },
-                contentScale = ContentScale.FillHeight)
-            Canvas(Modifier.fillMaxSize()) {
-                val iw = size.height * 0.75f; val ox = (size.width - iw) / 2f
-                fun at(fx: Float, fy: Float) = Offset(ox + fx * iw, fy * size.height)
-                for (p in pts) {
-                    val a = 0.5f + 0.5f * sin(2f * Math.PI.toFloat() * (t * p[3] + p[2]))
-                    drawCircle(Color(0xFFFFD27A).copy(alpha = (a * a * 0.85f).coerceIn(0f, 1f)), p[4].dp.toPx(), at(p[0], p[1]))
+    Box(Modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) { detectTapGestures { skip = true } }) {
+        for (i in 0 until n) {
+            val d = if (i % 2 == 0) 1f else -1f
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                val w = size.width; val a = pIn[i].value; val o = pOut[i].value
+                val drift = d * 10.dp.toPx() * sin(hold.value * Math.PI.toFloat())
+                translationX = d * w * 1.1f * (1f - a) - d * w * 1.1f * o + drift
+                val z = 1.1f + 0.05f * hold.value; scaleX = z; scaleY = z
+                if (Build.VERSION.SDK_INT >= 31) {
+                    val bx = 90f * maxOf(1f - a, o)          // horizontal motion blur: strongest while moving fast
+                    renderEffect = if (bx > 0.6f) BlurEffect(bx, 0.01f, TileMode.Decal) else null
                 }
-                listOf(0.445f to 0.282f, 0.5575f to 0.292f, 0.445f to 0.320f, 0.5575f to 0.326f).forEach { (fx, fy) ->
-                    val c = at(fx, fy); val r = 26.dp.toPx() * pulse
-                    drawCircle(Brush.radialGradient(listOf(Color(0xFFFFF4CC).copy(alpha = 0.75f * pulse), Color.Transparent), c, r), r, c)
-                }
+            }.drawWithContent {
+                val imgH = size.width / FLYER_ASPECT; val y0 = (size.height - imgH) / 2f
+                clipRect(top = y0 + imgH * i / n - 0.5f, bottom = y0 + imgH * (i + 1) / n + 1f) { this@drawWithContent.drawContent() }
+            }) {
+                Image(painter, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillWidth)
             }
         }
-        // Title: neon power-on flicker, springy scale-in, then a light sweep
-        Box(Modifier.fillMaxSize().graphicsLayer {
-            alpha = title.value; scaleX = tscale.value; scaleY = tscale.value
-            transformOrigin = TransformOrigin(0.5f, 0.17f); compositingStrategy = CompositingStrategy.Offscreen
-        }.drawWithContent {
-            drawContent()
-            val cx = size.width * sweep.value; val w = size.width * 0.18f
-            clipRect(bottom = size.height * 0.274f) {
-                drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White, Color.Transparent), Offset(cx - w, 0f), Offset(cx + w, size.height * 0.3f)),
-                    blendMode = BlendMode.Overlay)
-            }
-        }) {
-            Image(painter, null, Modifier.fillMaxSize().drawWithContent { clipRect(bottom = size.height * 0.274f) { this@drawWithContent.drawContent() } },
-                contentScale = ContentScale.FillHeight)
-        }
-        // Breathing neon glow around the title
-        Box(Modifier.fillMaxSize().drawBehind {
-            val c = Offset(size.width / 2f, size.height * 0.17f); val r = size.width * 0.6f
-            drawCircle(Brush.radialGradient(listOf(Color(0xFF2BFF00).copy(alpha = 0.22f * pulse * title.value), Color.Transparent), c, r), r, c, blendMode = BlendMode.Plus)
-        })
-        // Vignette
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(0.35f), 0.15f to Color.Transparent, 0.65f to Color.Transparent, 1f to Color.Black.copy(0.9f))))
-        // Equalizer loader
         val eq = rememberInfiniteTransition(label = "eq")
-        Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 48.dp).graphicsLayer { alpha = city.value },
+        Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 48.dp)
+            .graphicsLayer { alpha = pIn[n - 1].value * (1f - pOut[0].value) },
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
             listOf(520, 640, 460, 700, 580).forEachIndexed { i, ms ->
                 val h by eq.animateFloat(8f, 38f, infiniteRepeatable(tween(ms, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "b$i")
