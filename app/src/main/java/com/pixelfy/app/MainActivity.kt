@@ -28,6 +28,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.core.graphics.drawable.toBitmap
+import coil.imageLoader
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.res.painterResource
@@ -399,30 +403,106 @@ val NpThemes = listOf(
     }
 }
 
-@Composable fun LyricsView(s: Song, pos: Long, t: NpTheme) {
+class LyricState(val res: LyricsResult?, val done: Boolean)
+
+@Composable fun rememberLyrics(s: Song): LyricState {
     val ctx = LocalContext.current
     var res by remember(s.id) { mutableStateOf<LyricsResult?>(null) }
     var done by remember(s.id) { mutableStateOf(false) }
     LaunchedEffect(s.id) { res = Lyrics.load(ctx, s, Audio.player.duration.coerceAtLeast(0L)); done = true }
-    val r = res
+    return LyricState(res, done)
+}
+
+/** Mid-tone colour taken from the album cover, used as the lyrics background (like Spotify). */
+@Composable fun rememberArtColor(s: Song): Color {
+    val ctx = LocalContext.current
+    val c by produceState(Color(0xFF3A5F6B), s.id) {
+        try {
+            val res = ctx.imageLoader.execute(ImageRequest.Builder(ctx).data(s.art).size(32).allowHardware(false).build())
+            val bmp = (res as? SuccessResult)?.drawable?.toBitmap()
+            if (bmp != null) {
+                var r = 0L; var g = 0L; var b = 0L; var n = 0
+                for (x in 0 until bmp.width step 2) for (y in 0 until bmp.height step 2) {
+                    val px = bmp.getPixel(x, y)
+                    r += android.graphics.Color.red(px); g += android.graphics.Color.green(px); b += android.graphics.Color.blue(px); n++
+                }
+                if (n > 0) {
+                    val hsv = FloatArray(3)
+                    android.graphics.Color.RGBToHSV((r / n).toInt(), (g / n).toInt(), (b / n).toInt(), hsv)
+                    hsv[1] = (hsv[1] * 1.15f).coerceIn(0.25f, 0.85f); hsv[2] = hsv[2].coerceIn(0.38f, 0.60f)
+                    value = Color(android.graphics.Color.HSVToColor(hsv))
+                }
+            }
+        } catch (_: Exception) {}
+    }
+    return c
+}
+
+/** Bold lyric lines: sung lines are white, upcoming lines are dark. Tap a line to jump to it. */
+@Composable fun LyricLines(lyr: LyricState, pos: Long, big: Boolean, onSeek: (Long) -> Unit, modifier: Modifier = Modifier) {
+    val r = lyr.res
     if (r == null) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            if (!done) LoadingBlob(t.fg) else Text("No lyrics found.\nConnect to the internet and try again.",
-                color = t.fg.copy(0.7f), fontSize = 16.sp, textAlign = TextAlign.Center)
+        Box(modifier.fillMaxSize(), Alignment.Center) {
+            if (!lyr.done) LoadingBlob(Color.White)
+            else Text("No lyrics found.\nConnect to the internet and try again.", color = Color.White.copy(0.8f), fontSize = 16.sp, textAlign = TextAlign.Center)
         }
         return
     }
     val idx = if (r.synced) r.lines.indexOfLast { it.ms <= pos } else -1
     val st = rememberLazyListState()
-    LaunchedEffect(idx) { if (idx >= 0) st.animateScrollToItem(idx, -st.layoutInfo.viewportSize.height / 3) }
-    LazyColumn(Modifier.fillMaxSize(), st, contentPadding = PaddingValues(vertical = 80.dp)) {
+    LaunchedEffect(idx) { if (idx >= 0) st.animateScrollToItem(idx, -st.layoutInfo.viewportSize.height / 5) }
+    LazyColumn(modifier, st, contentPadding = PaddingValues(vertical = if (big) 60.dp else 12.dp)) {
         items(r.lines.size) { i ->
             val l = r.lines[i]
-            val active = !r.synced || i == idx
-            val col by animateColorAsState(if (active) t.fg else t.fg.copy(0.38f), label = "c")
+            val target = when { !r.synced -> Color.White; i == idx -> Color.White; i < idx -> Color.White.copy(0.75f); else -> Color.Black.copy(0.38f) }
+            val col by animateColorAsState(target, label = "lc")
             Text(l.text.ifBlank { if (r.synced) "♪" else " " },
-                Modifier.fillMaxWidth().then(if (r.synced) Modifier.tap { Audio.seekTo(l.ms) } else Modifier).padding(vertical = 8.dp),
-                color = col, fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.ExtraBold)
+                Modifier.fillMaxWidth().then(if (r.synced) Modifier.tap { onSeek(l.ms) } else Modifier).padding(vertical = if (big) 10.dp else 6.dp),
+                color = col, fontSize = if (big) 30.sp else 22.sp, lineHeight = if (big) 36.sp else 28.sp, fontWeight = FontWeight.ExtraBold)
+        }
+    }
+}
+
+/** Compact lyrics card shown inside the player (tap the expand icon for full screen). */
+@Composable fun LyricsCard(s: Song, lyr: LyricState, pos: Long, onExpand: () -> Unit, onSeek: (Long) -> Unit, modifier: Modifier) {
+    val bg by animateColorAsState(rememberArtColor(s), tween(600), label = "lbg")
+    Column(modifier.clip(RoundedCornerShape(22.dp)).background(bg)) {
+        Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 6.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("LYRICS", Modifier.weight(1f), color = Color.White.copy(0.85f), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            IconBtn(Icons.Rounded.Fullscreen, tint = Color.White) { onExpand() }
+        }
+        LyricLines(lyr, pos, false, onSeek, Modifier.weight(1f).padding(horizontal = 18.dp))
+    }
+}
+
+/** Full-screen lyrics: song header with close button, big lyrics, seek bar and a large play/pause button. */
+@Composable fun LyricsFull(s: Song, lyr: LyricState, pos: Long, dur: Long, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val bg by animateColorAsState(rememberArtColor(s), tween(600), label = "fbg")
+    val view = LocalView.current
+    var drag by remember { mutableStateOf<Float?>(null) }
+    Column(Modifier.fillMaxSize().background(bg).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Art(s, Modifier.size(44.dp), RoundedCornerShape(6.dp))
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.artist, color = Color.White.copy(0.75f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.size(36.dp).clip(CircleShape).background(Color.Black.copy(0.35f)).tap { onClose() }, Alignment.Center) {
+                Icon(Icons.Rounded.Close, null, tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+        LyricLines(lyr, pos, true, { Audio.seekTo(it) }, Modifier.weight(1f).padding(horizontal = 22.dp))
+        Column(Modifier.padding(horizontal = 20.dp)) {
+            WavySeek(drag ?: (if (dur > 0) pos.toFloat() / dur else 0f), Audio.playing, Color.White, { drag = it },
+                { drag?.let { Audio.seekTo((it * dur).toLong()) }; drag = null; view.buzz() })
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(fmt(pos), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(fmt(dur), color = Color.White.copy(0.8f), fontSize = 12.sp)
+            }
+            Box(Modifier.align(Alignment.CenterHorizontally).padding(vertical = 14.dp).size(68.dp).clip(CircleShape).background(Color.White).tap(true) { Audio.toggle() }, Alignment.Center) {
+                Icon(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = bg, modifier = Modifier.size(36.dp))
+            }
         }
     }
 }
@@ -443,6 +523,8 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     var dur by remember { mutableLongStateOf(0L) }
     var drag by remember { mutableStateOf<Float?>(null) }
     var showLyrics by remember { mutableStateOf(false) }
+    var lyricsFull by remember { mutableStateOf(false) }
+    val lyr = rememberLyrics(s)
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(200) } }
     val liked = s.id in Audio.liked
     val white = Color.White
@@ -478,9 +560,7 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
                 IconBtn(Icons.Rounded.KeyboardArrowDown, tint = white) { onClose() }
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
-                if (showLyrics) Box(Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)).background(Color.Black.copy(0.45f)).padding(horizontal = 16.dp)) {
-                    LyricsView(s, pos, lt)
-                }
+                if (showLyrics) LyricsCard(s, lyr, pos, { lyricsFull = true }, { Audio.seekTo(it) }, Modifier.fillMaxSize())
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconBtn(Icons.Rounded.Subject, tint = if (showLyrics) Green else white) { showLyrics = !showLyrics }
@@ -510,6 +590,7 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
                 WideBtn(Icons.Rounded.SkipNext, Modifier.weight(1f)) { Audio.next() }
             }
         }
+        AnimatedVisibility(lyricsFull, enter = slideInVertically { it }, exit = slideOutVertically { it }) { LyricsFull(s, lyr, pos, dur) { lyricsFull = false } }
     }
 }
 
