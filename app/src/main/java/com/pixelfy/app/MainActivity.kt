@@ -89,7 +89,14 @@ import kotlinx.coroutines.withContext
 import kotlin.math.cos
 import kotlin.math.sin
 
-val Green = Color(0xFF1ED760); val Bg = Color.Black; val TileBg = Color(0xFF2A2A2A); val Grey = Color(0xFFB3B3B3)
+data class AccentOpt(val name: String, val color: Color)
+val AccentPalette = listOf(
+    AccentOpt("White", Color.White), AccentOpt("Green", Color(0xFF1ED760)), AccentOpt("Blue", Color(0xFF4DA3FF)),
+    AccentOpt("Purple", Color(0xFFB06BFF)), AccentOpt("Orange", Color(0xFFFF9A3D)), AccentOpt("Pink", Color(0xFFFF6FB5)), AccentOpt("Red", Color(0xFFFF5A5F)))
+/** The theme (accent) colour chosen in Settings. The background always stays OLED black. */
+val Green: Color get() = AccentPalette[Audio.accent.coerceIn(0, AccentPalette.lastIndex)].color
+val GreenDark: Color get() = lerp(Green, Color.Black, 0.45f)
+val Bg = Color.Black; val TileBg = Color(0xFF2A2A2A); val Grey = Color(0xFFB3B3B3)
 
 // ---------- Glassmorphism ----------
 fun Modifier.glass(shape: Shape = RoundedCornerShape(16.dp), a: Float = 0.08f): Modifier = this
@@ -697,7 +704,7 @@ const val FLYER_ASPECT = 0.7521f
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.Bottom) {
             listOf(520, 640, 460, 700, 580).forEachIndexed { i, ms ->
                 val h by eq.animateFloat(8f, 38f, infiniteRepeatable(tween(ms, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "b$i")
-                Box(Modifier.width(6.dp).height(h.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF2BFF00)))
+                Box(Modifier.width(6.dp).height(h.dp).clip(RoundedCornerShape(3.dp)).background(Green))
             }
         }
     }
@@ -736,7 +743,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
 /** Style 2: fluid bubbles with an expanding pill, on a frosted dock. */
 @Composable fun NavBarFluid(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
     val secs = listOf(
-        NavSec("Home", Icons.Rounded.Home, listOf(Color(0xFF1ED760), Color(0xFF0B7A35)), Icons.Rounded.Refresh),
+        NavSec("Home", Icons.Rounded.Home, listOf(Green, GreenDark), Icons.Rounded.Refresh),
         NavSec("Search", Icons.Rounded.Search, listOf(Color(0xFF4DA3FF), Color(0xFF1B4DB3)), Icons.Rounded.Shuffle),
         NavSec("Your Library", Icons.Rounded.LibraryMusic, listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)), Icons.Rounded.SortByAlpha),
         NavSec("Create", Icons.Rounded.Add, listOf(Color(0xFFFF9A3D), Color(0xFFD1491F)), Icons.Rounded.Refresh)
@@ -770,7 +777,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         .then(if (!on) Modifier.tap { onSelect() } else Modifier),
         contentAlignment = Alignment.CenterStart) {
         Box(Modifier.padding(start = padv).size(icv).clip(CircleShape).background(Brush.linearGradient(sc.tint)).border(1.dp, Color.White.copy(0.28f), CircleShape), Alignment.Center) {
-            Icon(sc.icon, null, tint = Color.White, modifier = Modifier.size(icv * 0.5f))
+            Icon(sc.icon, null, tint = if (sc.tint.first().luminance() > 0.6f) Color.Black else Color.White, modifier = Modifier.size(icv * 0.5f))
         }
         Text(sc.label, Modifier.padding(start = 56.dp).graphicsLayer { alpha = pill }, color = Color.White, fontSize = 17.sp,
             fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
@@ -793,7 +800,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             Spacer(Modifier.size(42.dp))
         }
         Spacer(Modifier.height(20.dp))
-        Box(Modifier.size(110.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, Color(0xFF0B7A35)))), Alignment.Center) {
+        Box(Modifier.size(110.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, GreenDark))), Alignment.Center) {
             Text(name.trim().take(1).uppercase().ifEmpty { "J" }, color = Color.Black, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold)
         }
         TextField(name, { name = it.take(20); Audio.saveName(name) }, Modifier.padding(top = 12.dp), singleLine = true,
@@ -833,6 +840,18 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             Icon(Icons.Rounded.Refresh, null, tint = Green)
             Text("Rescan music files", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         }
+        Text("Theme colour", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(TileBg).padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            AccentPalette.forEachIndexed { i, opt ->
+                val sel = Audio.accent == i
+                Box(Modifier.size(42.dp).clip(CircleShape).tap { Audio.chooseAccent(i) }
+                    .border(2.dp, if (sel) Color.White else Color.Transparent, CircleShape).padding(5.dp), Alignment.Center) {
+                    Box(Modifier.fillMaxSize().clip(CircleShape).background(opt.color), Alignment.Center) {
+                        if (sel) Icon(Icons.Rounded.Check, null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
         Text("Sections bar style", Modifier.padding(top = 12.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         styles.forEachIndexed { i, (name, desc) ->
             val sel = Audio.navStyle == i
@@ -865,7 +884,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             1 -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(32.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF4DA3FF), Color(0xFF1B4DB3)))))
                 Box(Modifier.size(96.dp, 32.dp).clip(CircleShape).background(Color(0xFF1C1C1E)).border(1.dp, Color.White.copy(0.16f), CircleShape), Alignment.CenterStart) {
-                    Box(Modifier.padding(start = 4.dp).size(24.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, Color(0xFF0B7A35)))))
+                    Box(Modifier.padding(start = 4.dp).size(24.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, GreenDark))))
                     Box(Modifier.padding(start = 36.dp).size(36.dp, 6.dp).clip(CircleShape).background(Color.White.copy(0.7f)))
                 }
                 Box(Modifier.size(32.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)))))
