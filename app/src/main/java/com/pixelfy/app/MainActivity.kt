@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.core.graphics.drawable.toBitmap
 import coil.imageLoader
 import coil.request.ImageRequest
@@ -349,39 +350,77 @@ class MainActivity : ComponentActivity() {
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(500) } }
-    // Floating capsule of frosted, blurred album art: pause on the left, title + artist, outlined "+" on the right,
-    // progress line along the bottom edge. Swipe left/right to skip, tap the title to open the player.
-    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).height(52.dp).clip(shape).background(Color(0xFF1B1B1B))
-        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.5f), Color.White.copy(0.08f), Color.White.copy(0.25f))), shape)
-        .pointerInput(Unit) {
-            var acc = 0f
-            detectHorizontalDragGestures(
-                onDragStart = { acc = 0f },
-                onDragEnd = { if (acc < -90f) { Audio.next(); view.buzz(true) } else if (acc > 90f) { Audio.prev(); view.buzz(true) } }
-            ) { _, d -> acc += d }
-        }) {
-        Crossfade(targetState = s, modifier = Modifier.matchParentSize(), animationSpec = tween(500), label = "mp") { song ->
-            AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize().blur(40.dp), contentScale = ContentScale.Crop)
+    // Glow: while music plays the blurred cover slowly flows and a coloured light drifts and pulses inside (and around) the bar.
+    val art = rememberArtColor(s)
+    val glowColor = lerp(art, Color.White, 0.2f)
+    val live by animateFloatAsState(if (Audio.playing) 1f else 0f, tween(900), label = "live")
+    val tr = rememberInfiniteTransition(label = "glow")
+    val p1 by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(11000, easing = LinearEasing)), label = "p1")
+    val p2 by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(17000, easing = LinearEasing)), label = "p2")
+    val pulse by tr.animateFloat(0.55f, 1f, infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
+    val tau = (2 * Math.PI).toFloat()
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).height(52.dp)) {
+        if (Build.VERSION.SDK_INT >= 31) {
+            Box(Modifier.matchParentSize().blur(22.dp, BlurredEdgeTreatment.Unbounded).drawBehind {
+                val cx = size.width * (0.2f + 0.6f * (0.5f + 0.5f * sin(tau * p1)))
+                drawRoundRect(Brush.radialGradient(listOf(glowColor.copy(alpha = 0.55f * pulse * live), Color.Transparent), Offset(cx, size.height / 2), size.width * 0.5f),
+                    Offset(-8.dp.toPx(), -6.dp.toPx()), Size(size.width + 16.dp.toPx(), size.height + 12.dp.toPx()), CornerRadius(size.height))
+            })
         }
-        Box(Modifier.matchParentSize().background(Brush.linearGradient(listOf(Color.White.copy(0.10f), Color.Black.copy(0.40f)))))
-        Row(Modifier.fillMaxSize().padding(start = 18.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(30.dp).clip(CircleShape).tap(true) { Audio.toggle() }, Alignment.Center) {
-                if (Audio.playing) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
-                    Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
-                } else Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(26.dp))
+        Box(Modifier.matchParentSize().clip(shape).background(Color(0xFF1B1B1B))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.5f), Color.White.copy(0.08f), Color.White.copy(0.25f))), shape)
+            .pointerInput(Unit) {
+                var acc = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { acc = 0f },
+                    onDragEnd = { if (acc < -90f) { Audio.next(); view.buzz(true) } else if (acc > 90f) { Audio.prev(); view.buzz(true) } }
+                ) { _, d -> acc += d }
+            }) {
+            Crossfade(targetState = s, modifier = Modifier.matchParentSize(), animationSpec = tween(500), label = "mp") { song ->
+                Box(Modifier.fillMaxSize()) {
+                    AsyncImage(model = song.art, contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().graphicsLayer {
+                            val k = 1.7f + 0.2f * sin(tau * p1) * live
+                            scaleX = k; scaleY = k
+                            translationX = sin(tau * p1) * size.width * 0.18f * live
+                            translationY = cos(tau * p2) * size.height * 0.5f * live
+                            rotationZ = 14f * sin(tau * p2) * live
+                        }.blur(36.dp))
+                    AsyncImage(model = song.art, contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().graphicsLayer {
+                            val k = 2.2f + 0.25f * cos(tau * p2) * live
+                            scaleX = k; scaleY = k
+                            translationX = -sin(tau * p2) * size.width * 0.22f * live
+                            translationY = sin(tau * p1) * size.height * 0.5f * live
+                            rotationZ = -18f * cos(tau * p1) * live
+                            alpha = 0.55f
+                        }.blur(30.dp))
+                }
             }
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp).tap { onOpen() }) {
-                Text(s.title, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(s.artist, color = Color.White.copy(0.55f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.matchParentSize().background(Brush.linearGradient(listOf(Color.White.copy(0.10f), Color.Black.copy(0.36f)))))
+            Box(Modifier.matchParentSize().drawBehind {
+                val cx = size.width * (0.8f - 0.6f * (0.5f + 0.5f * sin(tau * p2)))
+                drawRect(Brush.radialGradient(listOf(glowColor.copy(alpha = 0.40f * pulse * live), Color.Transparent), Offset(cx, size.height / 2), size.width * 0.45f), blendMode = BlendMode.Plus)
+            })
+            Row(Modifier.fillMaxSize().padding(start = 18.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(30.dp).clip(CircleShape).tap(true) { Audio.toggle() }, Alignment.Center) {
+                    if (Audio.playing) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
+                        Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
+                    } else Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                }
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp).tap { onOpen() }) {
+                    Text(s.title, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(s.artist, color = Color.White.copy(0.55f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Box(Modifier.size(32.dp).clip(CircleShape).border(1.8.dp, if (liked) Green else Color.White, CircleShape).tap { Audio.toggleLike(s) }, Alignment.Center) {
+                    Icon(if (liked) Icons.Rounded.Check else Icons.Rounded.Add, null, tint = if (liked) Green else Color.White, modifier = Modifier.size(18.dp))
+                }
             }
-            Box(Modifier.size(32.dp).clip(CircleShape).border(1.8.dp, if (liked) Green else Color.White, CircleShape).tap { Audio.toggleLike(s) }, Alignment.Center) {
-                Icon(if (liked) Icons.Rounded.Check else Icons.Rounded.Add, null, tint = if (liked) Green else Color.White, modifier = Modifier.size(18.dp))
+            Box(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, bottom = 4.dp).fillMaxWidth().height(2.dp)
+                .clip(RoundedCornerShape(1.dp)).background(Color.White.copy(0.18f))) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f).background(Color.White))
             }
-        }
-        Box(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, bottom = 4.dp).fillMaxWidth().height(2.dp)
-            .clip(RoundedCornerShape(1.dp)).background(Color.White.copy(0.18f))) {
-            Box(Modifier.fillMaxHeight().fillMaxWidth(if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f).background(Color.White))
         }
     }
 }
