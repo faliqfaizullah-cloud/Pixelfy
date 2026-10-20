@@ -151,6 +151,7 @@ class MainActivity : ComponentActivity() {
     var sortAz by remember { mutableStateOf(false) }
     var screen by remember { mutableIntStateOf(0) }
     var splash by remember { mutableStateOf(true) }
+    val tabIdx = if (Audio.navStyle == 3) tab.coerceAtMost(2) else tab
     val crashFile = remember { File(ctx.filesDir, "crash.txt") }
     var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
     crash?.let { txt ->
@@ -176,7 +177,7 @@ class MainActivity : ComponentActivity() {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
-            AnimatedContent(tab, transitionSpec = {
+            AnimatedContent(tabIdx, transitionSpec = {
                 val d = if (targetState > initialState) 1 else -1
                 (slideInHorizontally(spring(stiffness = 300f)) { it / 6 * d } + fadeIn(tween(220))) togetherWith
                     (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
@@ -190,7 +191,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         MiniPlayer { full = true }
-        NavBar(tab, { tab = it }) { i ->
+        NavBar(tabIdx, { tab = it }) { i ->
             when (i) {
                 0, 3 -> tick++
                 1 -> if (songs.isNotEmpty()) Audio.play(songs.shuffled(), 0)
@@ -200,7 +201,7 @@ class MainActivity : ComponentActivity() {
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
     AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }) { screen = 0 } }
-    AnimatedVisibility(screen == 2, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { SettingsScreen { screen = 1 } }
+    AnimatedVisibility(screen == 2, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { SettingsScreen({ tick++ }) { screen = 1 } }
     if (splash) Splash { splash = false }
     }
 }
@@ -344,14 +345,14 @@ class MainActivity : ComponentActivity() {
     val s = Audio.current ?: return
     val view = LocalView.current
     val liked = s.id in Audio.liked
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(50)
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(500) } }
-    // Frosted glass bar: blurred album art + tint, thumbnail, title/artist, device / like / play, thin progress line.
-    // Swipe left or right on the bar to skip tracks; tap the song to open the full player.
-    Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).clip(shape).background(Color(0xFF222222))
-        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.45f), Color.White.copy(0.05f), Color.White.copy(0.2f))), shape)
+    // Floating capsule of frosted, blurred album art: pause on the left, title + artist, outlined "+" on the right,
+    // progress line along the bottom edge. Swipe left/right to skip, tap the title to open the player.
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).height(52.dp).clip(shape).background(Color(0xFF1B1B1B))
+        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(0.5f), Color.White.copy(0.08f), Color.White.copy(0.25f))), shape)
         .pointerInput(Unit) {
             var acc = 0f
             detectHorizontalDragGestures(
@@ -360,22 +361,26 @@ class MainActivity : ComponentActivity() {
             ) { _, d -> acc += d }
         }) {
         Crossfade(targetState = s, modifier = Modifier.matchParentSize(), animationSpec = tween(500), label = "mp") { song ->
-            AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize().blur(48.dp), contentScale = ContentScale.Crop)
+            AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize().blur(40.dp), contentScale = ContentScale.Crop)
         }
-        Box(Modifier.matchParentSize().background(Brush.horizontalGradient(listOf(Color.White.copy(0.20f), Color.Black.copy(0.45f)))))
-        Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).tap { onOpen() }, verticalAlignment = Alignment.CenterVertically) {
-                Art(s, Modifier.size(46.dp), RoundedCornerShape(6.dp))
-                Column(Modifier.padding(horizontal = 12.dp)) {
-                    Text(s.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(s.artist, color = Color.White.copy(0.7f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+        Box(Modifier.matchParentSize().background(Brush.linearGradient(listOf(Color.White.copy(0.10f), Color.Black.copy(0.40f)))))
+        Row(Modifier.fillMaxSize().padding(start = 18.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(30.dp).clip(CircleShape).tap(true) { Audio.toggle() }, Alignment.Center) {
+                if (Audio.playing) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
+                    Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
+                } else Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(26.dp))
             }
-            IconBtn(Icons.Rounded.Cast) { onOpen() }
-            IconBtn(if (liked) Icons.Rounded.CheckCircle else Icons.Rounded.AddCircleOutline, tint = if (liked) Green else Color.White) { Audio.toggleLike(s) }
-            IconBtn(if (Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, strong = true) { Audio.toggle() }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp).tap { onOpen() }) {
+                Text(s.title, color = Color.White, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.artist, color = Color.White.copy(0.55f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.size(32.dp).clip(CircleShape).border(1.8.dp, if (liked) Green else Color.White, CircleShape).tap { Audio.toggleLike(s) }, Alignment.Center) {
+                Icon(if (liked) Icons.Rounded.Check else Icons.Rounded.Add, null, tint = if (liked) Green else Color.White, modifier = Modifier.size(18.dp))
+            }
         }
-        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(Color.White.copy(0.25f))) {
+        Box(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, bottom = 4.dp).fillMaxWidth().height(2.dp)
+            .clip(RoundedCornerShape(1.dp)).background(Color.White.copy(0.18f))) {
             Box(Modifier.fillMaxHeight().fillMaxWidth(if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f).background(Color.White))
         }
     }
@@ -664,6 +669,7 @@ const val FLYER_ASPECT = 0.7521f
     when (Audio.navStyle) {
         0 -> NavBarClassic(sel, onSelect)
         1 -> NavBarFluid(sel, onSelect, onAction)
+        3 -> NavBarMinimal(sel, onSelect)
         else -> NavBarCapsule(sel, onSelect)
     }
 }
@@ -772,16 +778,21 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
     }
 }
 
-@Composable fun SettingsScreen(onClose: () -> Unit) {
+@Composable fun SettingsScreen(onRescan: () -> Unit, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     val styles = listOf("Classic" to "Icons with labels and a pill highlight",
         "Fluid" to "Bubbles that stretch into a pill, on a frosted dock",
-        "Capsule" to "Hold and swipe left or right on a glowing capsule")
+        "Capsule" to "Hold and swipe left or right on a glowing capsule",
+        "Minimal" to "Thin icons with Home, Discovery and Collection")
     Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconBtn(Icons.Rounded.ArrowBack) { onClose() }
             Text("Settings", Modifier.weight(1f), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
             Spacer(Modifier.size(42.dp))
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onRescan() }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Refresh, null, tint = Green)
+            Text("Rescan music files", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         }
         Text("Sections bar style", Modifier.padding(top = 12.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         styles.forEachIndexed { i, (name, desc) ->
@@ -820,10 +831,49 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
                 }
                 Box(Modifier.size(32.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFB06BFF), Color(0xFF5A22B8)))))
             }
-            else -> Box(Modifier.size(110.dp, 32.dp).clip(CircleShape)
+            2 -> Box(Modifier.size(110.dp, 32.dp).clip(CircleShape)
                 .background(Brush.verticalGradient(listOf(Color(0xFF2B2B3B), Color(0xFF1D1D29))))
                 .border(1.5.dp, Brush.verticalGradient(listOf(Color(0xFF8E8EB8), Color(0xFF4B4B6C))), CircleShape), Alignment.Center) {
                 Box(Modifier.size(26.dp, 5.dp).clip(CircleShape).background(Color(0xFF575C70)))
+            }
+            else -> Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                Text("Home", color = Color.White, fontSize = 11.sp); Text("Discovery", color = Grey, fontSize = 11.sp); Text("Collection", color = Grey, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+/** Minimal text sections bar: thin line icons with labels; the active section is white, the rest grey. */
+@Composable fun NavBarMinimal(sel: Int, onSelect: (Int) -> Unit) {
+    val items = listOf("Home", "Discovery", "Collection")
+    Row(Modifier.fillMaxWidth().background(Color.Black).navigationBarsPadding().padding(top = 6.dp, bottom = 8.dp)) {
+        items.forEachIndexed { i, label ->
+            val tint by animateColorAsState(if (i == sel) Color.White else Color(0xFF6E6E6E), tween(200), label = "nt")
+            Column(Modifier.weight(1f).tap { onSelect(i) }.padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                NavGlyph(i, tint, Modifier.size(30.dp))
+                Text(label, Modifier.padding(top = 6.dp), color = tint, fontSize = 12.sp, fontWeight = FontWeight.Normal)
+            }
+        }
+    }
+}
+
+@Composable fun NavGlyph(kind: Int, color: Color, modifier: Modifier) {
+    Canvas(modifier) {
+        val w = size.width; val h = size.height; val sw = 1.8.dp.toPx()
+        val st = Stroke(sw, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        when (kind) {
+            0 -> {   // rounded square with two arcs
+                drawRoundRect(color, Offset(sw, sw), Size(w - 2 * sw, h - 2 * sw), CornerRadius(w * 0.36f), style = st)
+                val c = Offset(w * 0.16f, h * 0.84f)
+                for (r in listOf(w * 0.30f, w * 0.52f)) drawArc(color, -90f, 90f, false, Offset(c.x - r, c.y - r), Size(2 * r, 2 * r), style = st)
+            }
+            1 -> {   // magnifier
+                drawCircle(color, w * 0.30f, Offset(w * 0.44f, h * 0.42f), style = st)
+                drawLine(color, Offset(w * 0.65f, h * 0.64f), Offset(w * 0.82f, h * 0.82f), sw, StrokeCap.Round)
+            }
+            else -> {   // collection: three slanted lines and one leaning the other way
+                for (x in listOf(0.20f, 0.38f, 0.56f)) drawLine(color, Offset((x + 0.06f) * w, h * 0.14f), Offset((x - 0.06f) * w, h * 0.86f), sw, StrokeCap.Round)
+                drawLine(color, Offset(0.74f * w, 0.14f * h), Offset(0.86f * w, 0.86f * h), sw, StrokeCap.Round)
             }
         }
     }

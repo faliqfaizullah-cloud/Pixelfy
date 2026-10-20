@@ -44,7 +44,7 @@ object Audio {
     var playing by mutableStateOf(false)
     var liked by mutableStateOf(setOf<Long>())
     var theme by mutableIntStateOf(0)
-    var navStyle by mutableIntStateOf(2)
+    var navStyle by mutableIntStateOf(3)
     var userName by mutableStateOf("You")
     var shuffle by mutableStateOf(false)
     var repeat by mutableIntStateOf(Player.REPEAT_MODE_OFF)
@@ -54,7 +54,7 @@ object Audio {
         ctx = c.applicationContext
         liked = ctx.getSharedPreferences("pixelfy", 0).getStringSet("liked", emptySet())!!.map { it.toLong() }.toSet()
         theme = ctx.getSharedPreferences("pixelfy", 0).getInt("theme", 0)
-        navStyle = ctx.getSharedPreferences("pixelfy", 0).getInt("navStyle", 2)
+        navStyle = ctx.getSharedPreferences("pixelfy", 0).getInt("navStyle4", 3)
         userName = ctx.getSharedPreferences("pixelfy", 0).getString("userName", "You") ?: "You"
         exo = ExoPlayer.Builder(ctx)
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -79,7 +79,7 @@ object Audio {
     fun playLiked(all: List<Song>) { val l = all.filter { it.id in liked }; if (l.isNotEmpty()) play(l, 0) }
     fun toggle() { if (exo.isPlaying) exo.pause() else exo.play() }
     fun seekTo(ms: Long) = exo.seekTo(ms)
-    fun chooseNavStyle(i: Int) { navStyle = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("navStyle", i).apply() }
+    fun chooseNavStyle(i: Int) { navStyle = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("navStyle4", i).apply() }
     fun saveName(n: String) { userName = n; ctx.getSharedPreferences("pixelfy", 0).edit().putString("userName", n).apply() }
     fun chooseTheme(i: Int) { theme = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("theme", i).apply() }
     fun toggleShuffle() { shuffle = !shuffle; exo.shuffleModeEnabled = shuffle }
