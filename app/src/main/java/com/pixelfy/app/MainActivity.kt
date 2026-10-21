@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.core.graphics.drawable.toBitmap
 import coil.imageLoader
@@ -159,7 +160,8 @@ class MainActivity : ComponentActivity() {
     var sortAz by remember { mutableStateOf(false) }
     var screen by remember { mutableIntStateOf(0) }
     var splash by remember { mutableStateOf(true) }
-    val tabIdx = if (Audio.navStyle == 3) tab.coerceAtMost(2) else tab
+    val glass = Audio.uiStyle == 2
+    val tabIdx = if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
     val crashFile = remember { File(ctx.filesDir, "crash.txt") }
     var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
     crash?.let { txt ->
@@ -182,22 +184,30 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-    Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f)) {
-            val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
-            AnimatedContent(tabIdx, transitionSpec = {
-                val d = if (targetState > initialState) 1 else -1
-                (slideInHorizontally(spring(stiffness = 300f)) { it / 6 * d } + fadeIn(tween(220))) togetherWith
-                    (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
-            }, label = "tab") { t ->
+    val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
+    var barsH by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
+    val content: @Composable () -> Unit = {
+        AnimatedContent(tabIdx, transitionSpec = {
+            val d = if (targetState > initialState) 1 else -1
+            (slideInHorizontally(spring(stiffness = 300f)) { it / 6 * d } + fadeIn(tween(220))) togetherWith
+                (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
+        }, label = "tab") { t ->
+            Box(Modifier.fillMaxSize().padding(bottom = if (glass && t != 0) barsH else 0.dp)) {
                 when (t) {
-                    0 -> if (Audio.uiStyle == 1) HomeDiscovery(songs) { screen = 1 } else Home(songs) { screen = 1 }
+                    0 -> when (Audio.uiStyle) {
+                        1 -> HomeDiscovery(songs) { screen = 1 }
+                        2 -> HomeGlass(songs, barsH) { screen = 1 }
+                        else -> Home(songs) { screen = 1 }
+                    }
                     1 -> SearchScreen(songs)
                     2 -> LibraryScreen(libSongs, sortAz) { sortAz = !sortAz }
                     else -> CreateScreen(songs.size) { tick++ }
                 }
             }
         }
+    }
+    val bars: @Composable () -> Unit = {
         MiniPlayer { full = true }
         NavBar(tabIdx, { tab = it }) { i ->
             when (i) {
@@ -206,6 +216,13 @@ class MainActivity : ComponentActivity() {
                 else -> sortAz = !sortAz
             }
         }
+    }
+    if (glass) Box(Modifier.fillMaxSize()) {
+        content()
+        Column(Modifier.align(Alignment.BottomCenter).onSizeChanged { barsH = with(density) { it.height.toDp() } }) { bars() }
+    } else Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f)) { content() }
+        bars()
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
     AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }) { screen = 0 } }
@@ -354,6 +371,7 @@ class MainActivity : ComponentActivity() {
     val view = LocalView.current
     val liked = s.id in Audio.liked
     val shape = RoundedCornerShape(50)
+    val glass = Audio.uiStyle == 2
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(500) } }
@@ -366,7 +384,7 @@ class MainActivity : ComponentActivity() {
     val p2 by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(17000, easing = LinearEasing)), label = "p2")
     val pulse by tr.animateFloat(0.55f, 1f, infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
     val tau = (2 * Math.PI).toFloat()
-    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).height(52.dp)) {
+    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).height(if (glass) 60.dp else 52.dp)) {
         if (Build.VERSION.SDK_INT >= 31) {
             Box(Modifier.matchParentSize().blur(22.dp, BlurredEdgeTreatment.Unbounded).drawBehind {
                 val cx = size.width * (0.2f + 0.6f * (0.5f + 0.5f * sin(tau * p1)))
@@ -410,7 +428,7 @@ class MainActivity : ComponentActivity() {
                 drawRect(Brush.radialGradient(listOf(glowColor.copy(alpha = 0.40f * pulse * live), Color.Transparent), Offset(cx, size.height / 2), size.width * 0.45f), blendMode = BlendMode.Plus)
             })
             Row(Modifier.fillMaxSize().padding(start = 18.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(30.dp).clip(CircleShape).tap(true) { Audio.toggle() }, Alignment.Center) {
+                Box(Modifier.size(if (glass) 44.dp else 30.dp).clip(CircleShape).then(if (glass) Modifier.background(Color.White.copy(0.18f)) else Modifier).tap(true) { Audio.toggle() }, Alignment.Center) {
                     if (Audio.playing) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
                         Box(Modifier.size(4.dp, 17.dp).clip(RoundedCornerShape(1.dp)).background(Color.White))
@@ -424,7 +442,7 @@ class MainActivity : ComponentActivity() {
                     Icon(if (liked) Icons.Rounded.Check else Icons.Rounded.Add, null, tint = if (liked) Green else Color.White, modifier = Modifier.size(18.dp))
                 }
             }
-            Box(Modifier.align(Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, bottom = 4.dp).fillMaxWidth().height(2.dp)
+            Box(Modifier.align(if (glass) Alignment.TopStart else Alignment.BottomStart).padding(start = 22.dp, end = 22.dp, top = if (glass) 4.dp else 0.dp, bottom = if (glass) 0.dp else 4.dp).fillMaxWidth().height(2.dp)
                 .clip(RoundedCornerShape(1.dp)).background(Color.White.copy(0.18f))) {
                 Box(Modifier.fillMaxHeight().fillMaxWidth(if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f).background(Color.White))
             }
@@ -741,9 +759,150 @@ class Playlist(val name: String, val songs: List<Song>)
     Box(Modifier.fillMaxWidth().height(70.dp).clip(edge).background(Color.Black).border(1.dp, Color.White.copy(0.08f), edge), Alignment.Center) {
         if (i == 0) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             repeat(3) { Box(Modifier.size(44.dp, 28.dp).clip(RoundedCornerShape(8.dp)).background(TileBg)) }
+        } else if (i == 2) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFF9AD5), Color(0xFFFF4A2A)))).border(1.dp, Color.White.copy(0.5f), CircleShape).padding(5.dp)
+                .clip(CircleShape).background(Color.White.copy(0.18f)))
+            repeat(2) { Box(Modifier.size(40.dp).glassPanel(RoundedCornerShape(12.dp)).padding(4.dp).clip(RoundedCornerShape(8.dp)).background(Brush.linearGradient(listOf(Color(0xFF4DA3FF), Color(0xFF2D1B8A))))) }
         } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFF9AD5), Color(0xFFFF4A2A)))))
             repeat(2) { Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF4DA3FF), Color(0xFF2D1B8A))))) }
+        }
+    }
+}
+
+// ---------- "Glass" UI ----------
+/** Everything that defines the glass look lives here. Change these numbers to restyle the whole UI. */
+object GlassStyle {
+    val panelTopAlpha = 0.20f; val panelBottomAlpha = 0.06f          // frosted white fill, top -> bottom
+    val strokeAlpha = 0.45f; val strokeEndAlpha = 0.06f; val strokeWidth = 1.2.dp   // rim light (border)
+    val innerRingAlpha = 0.35f; val innerRingInset = 9.dp            // ring inside the orbs
+    val glowAlpha = 0.45f; val glowBlur = 26.dp                      // ambient glow behind orbs and cards
+    val frameWidth = 8.dp; val frameCorner = 32.dp; val artCorner = 24.dp   // card frame
+    val orb = 156.dp; val tile = 156.dp                              // item sizes
+    val barTopCorner = 30.dp; val barDarkBase = 0.55f                // bottom bar
+    val rim: Brush get() = Brush.linearGradient(listOf(Color.White.copy(strokeAlpha), Color.White.copy(strokeEndAlpha), Color.White.copy(strokeAlpha * 0.6f)))
+    val fill: Brush get() = Brush.verticalGradient(listOf(Color.White.copy(panelTopAlpha), Color.White.copy(panelBottomAlpha)))
+}
+
+fun Modifier.glassPanel(shape: Shape): Modifier = clip(shape).background(GlassStyle.fill).border(GlassStyle.strokeWidth, GlassStyle.rim, shape)
+
+@Composable fun AmbientGlow(color: Color, modifier: Modifier = Modifier) {
+    if (Build.VERSION.SDK_INT >= 31) Box(modifier.blur(GlassStyle.glowBlur, BlurredEdgeTreatment.Unbounded).background(color.copy(GlassStyle.glowAlpha), CircleShape))
+}
+
+@Composable fun GlassOrb(m: MoodDef, onClick: () -> Unit) {
+    Box(Modifier.size(GlassStyle.orb).tap { onClick() }, Alignment.Center) {
+        AmbientGlow(m.b2, Modifier.matchParentSize().padding(6.dp))
+        Box(Modifier.matchParentSize().clip(CircleShape)) {
+            Canvas(Modifier.fillMaxSize()) {
+                val w = size.width; val h = size.height
+                drawRect(m.base)
+                fun blob(c: Color, fx: Float, fy: Float, r: Float) = drawRect(Brush.radialGradient(listOf(c, Color.Transparent), Offset(w * fx, h * fy), w * r))
+                blob(m.b1, 0.2f, 0.7f, 0.7f); blob(m.b2, 0.85f, 0.75f, 0.65f); blob(m.b3, 0.4f, 0.12f, 0.6f)
+                if (m.streaks) for (k in 0 until 9) drawRect(Color.Black.copy(alpha = 0.10f), Offset(0f, h * k / 9f), Size(w, h * 0.045f))
+            }
+        }
+        Box(Modifier.matchParentSize().border(GlassStyle.strokeWidth, GlassStyle.rim, CircleShape))
+        Box(Modifier.matchParentSize().padding(GlassStyle.innerRingInset).clip(CircleShape).background(GlassStyle.fill)
+            .border(1.dp, Color.White.copy(GlassStyle.innerRingAlpha), CircleShape), Alignment.Center) {
+            Text(m.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable fun GlassTile(song: Song, label: String, caption: String, onClick: () -> Unit) {
+    Column(Modifier.width(GlassStyle.tile).tap { onClick() }) {
+        Box(Modifier.size(GlassStyle.tile)) {
+            if (Build.VERSION.SDK_INT >= 31) AsyncImage(model = song.art, contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize().padding(6.dp).graphicsLayer { alpha = GlassStyle.glowAlpha }.blur(GlassStyle.glowBlur, BlurredEdgeTreatment.Unbounded))
+            Box(Modifier.matchParentSize().glassPanel(RoundedCornerShape(GlassStyle.frameCorner)).padding(GlassStyle.frameWidth)) {
+                Box(Modifier.fillMaxSize().clip(RoundedCornerShape(GlassStyle.artCorner)).background(Color(0xFF1C1C1E))) {
+                    Icon(Icons.Rounded.MusicNote, null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center))
+                    AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(0.6f))))
+                    Text(label, Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 12.dp, end = 10.dp), color = Color.White,
+                        fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        Text(caption, Modifier.padding(top = 8.dp, start = 4.dp), color = Grey, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable fun HomeGlass(songs: List<Song>, bottomPad: Dp, onProfile: () -> Unit) {
+    val moods = remember {
+        listOf(
+            MoodDef("Cheerful", Color(0xFFE8506A), Color(0xFFFF9AD5), Color(0xFFFFA52A), Color(0xFFFF3B1F), false),
+            MoodDef("Training", Color(0xFFFF7A1A), Color(0xFFFFB347), Color(0xFFE0521A), Color(0xFFFF5A1F), true),
+            MoodDef("Chill", Color(0xFF2A7FD6), Color(0xFF4DA3FF), Color(0xFF8AE2D0), Color(0xFF1B4DB3), false),
+            MoodDef("Focus", Color(0xFF5B3FD6), Color(0xFFB06BFF), Color(0xFF2D1B8A), Color(0xFF7B5CFF), false))
+    }
+    val likedSet = Audio.liked
+    val lists = remember(songs, likedSet) {
+        buildList {
+            if (songs.isNotEmpty()) {
+                add(Playlist("Always ok", songs.shuffled(Random(songs.size))))
+                add(Playlist("New", songs.take(20)))
+                val lk = songs.filter { it.id in likedSet }
+                if (lk.isNotEmpty()) add(Playlist("Liked", lk))
+                add(Playlist("Mix", songs.shuffled(Random(7))))
+            }
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPad + 16.dp)) {
+        item {
+            Box(Modifier.statusBarsPadding().padding(start = 20.dp, top = 12.dp).size(48.dp).glassPanel(CircleShape).tap { onProfile() }, Alignment.Center) {
+                Icon(Icons.Rounded.NorthWest, null, tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Sound for you", color = Color.White.copy(0.92f), fontSize = 22.sp, fontWeight = FontWeight.Medium)
+                Text("For you", Modifier.padding(start = 28.dp), color = Grey.copy(0.55f), fontSize = 14.sp)
+            }
+        }
+        item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 22.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(moods) { m -> GlassOrb(m) { if (songs.isNotEmpty()) Audio.play(songs.shuffled(Random(m.label.hashCode())), 0) } }
+            }
+        }
+        if (songs.isEmpty()) item { Text("Grant storage permission and add music files to your phone", Modifier.padding(24.dp), color = Grey) }
+        else {
+            item { SectionHeader("Playlists of the day") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(lists) { p -> GlassTile(p.songs.first(), p.name, p.songs.map { it.artist }.distinct().take(4).joinToString(", ")) { Audio.play(p.songs, 0) } }
+                }
+            }
+            item { SectionHeader("Recently added") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(songs.take(15)) { sg -> GlassTile(sg, sg.title, sg.artist) { Audio.play(songs, songs.indexOf(sg)) } }
+                }
+            }
+        }
+    }
+}
+
+/** Translucent frosted bottom bar with a soft glowing pill behind the active tab. */
+@Composable fun NavBarGlass(sel: Int, onSelect: (Int) -> Unit) {
+    val items = listOf("Home", "Discovery", "Collection")
+    val kinds = listOf(3, 1, 2)
+    val shape = RoundedCornerShape(topStart = GlassStyle.barTopCorner, topEnd = GlassStyle.barTopCorner)
+    Row(Modifier.fillMaxWidth().clip(shape).background(Color.Black.copy(GlassStyle.barDarkBase)).background(GlassStyle.fill)
+        .border(GlassStyle.strokeWidth, GlassStyle.rim, shape).navigationBarsPadding().padding(top = 10.dp, bottom = 8.dp)) {
+        items.forEachIndexed { i, label ->
+            val on = i == sel
+            val tint by animateColorAsState(if (on) Color.White else Color(0xFF8A8FA3), tween(200), label = "gt")
+            val pill by animateColorAsState(if (on) Color.White.copy(0.16f) else Color.Transparent, tween(200), label = "gp")
+            Column(Modifier.weight(1f).tap { onSelect(i) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(64.dp, 34.dp), Alignment.Center) {
+                    if (on && Build.VERSION.SDK_INT >= 31) Box(Modifier.matchParentSize().blur(10.dp, BlurredEdgeTreatment.Unbounded).background(Color.White.copy(0.20f), CircleShape))
+                    Box(Modifier.matchParentSize().clip(CircleShape).background(pill))
+                    NavGlyph(kinds[i], tint, Modifier.size(28.dp))
+                }
+                Text(label, Modifier.padding(top = 2.dp), color = tint, fontSize = 12.sp)
+            }
         }
     }
 }
@@ -815,6 +974,7 @@ const val FLYER_ASPECT = 0.7521f
 
 // ---------- Sections bar styles (chosen in Settings) ----------
 @Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
+    if (Audio.uiStyle == 2) { NavBarGlass(sel, onSelect); return }
     when (Audio.navStyle) {
         0 -> NavBarClassic(sel, onSelect)
         1 -> NavBarFluid(sel, onSelect, onAction)
@@ -944,7 +1104,8 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             Text("Rescan music files", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         }
         Text("App UI", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
-        listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles").forEachIndexed { i, (name, desc) ->
+        listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles",
+            "Glass" to "Frosted glass, glowing orbs and translucent bars").forEachIndexed { i, (name, desc) ->
             val sel = Audio.uiStyle == i
             val shape = RoundedCornerShape(22.dp)
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).background(TileBg)
@@ -1047,6 +1208,11 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             1 -> {   // magnifier
                 drawCircle(color, w * 0.30f, Offset(w * 0.44f, h * 0.42f), style = st)
                 drawLine(color, Offset(w * 0.65f, h * 0.64f), Offset(w * 0.82f, h * 0.82f), sw, StrokeCap.Round)
+            }
+            3 -> {   // house
+                val p = Path(); p.moveTo(w * 0.14f, h * 0.86f); p.lineTo(w * 0.14f, h * 0.45f); p.lineTo(w * 0.5f, h * 0.14f)
+                p.lineTo(w * 0.86f, h * 0.45f); p.lineTo(w * 0.86f, h * 0.86f); p.close()
+                drawPath(p, color, style = Stroke(sw, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = PathEffect.cornerPathEffect(w * 0.14f)))
             }
             else -> {   // collection: three slanted lines and one leaning the other way
                 for (x in listOf(0.20f, 0.38f, 0.56f)) drawLine(color, Offset((x + 0.06f) * w, h * 0.14f), Offset((x - 0.06f) * w, h * 0.86f), sw, StrokeCap.Round)
