@@ -191,7 +191,7 @@ class MainActivity : ComponentActivity() {
                     (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
             }, label = "tab") { t ->
                 when (t) {
-                    0 -> Home(songs) { screen = 1 }
+                    0 -> if (Audio.uiStyle == 1) HomeDiscovery(songs) { screen = 1 } else Home(songs) { screen = 1 }
                     1 -> SearchScreen(songs)
                     2 -> LibraryScreen(libSongs, sortAz) { sortAz = !sortAz }
                     else -> CreateScreen(songs.size) { tick++ }
@@ -645,6 +645,109 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     }
 }
 
+// ---------- "Discovery" UI: mood orbs, daily playlists and big rounded tiles ----------
+class MoodDef(val label: String, val base: Color, val b1: Color, val b2: Color, val b3: Color, val streaks: Boolean)
+class Playlist(val name: String, val songs: List<Song>)
+
+@Composable fun MoodOrb(m: MoodDef, size: Dp, onClick: () -> Unit) {
+    Box(Modifier.size(size).clip(CircleShape).tap { onClick() }, Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val w = size.width; val h = size.height
+            drawRect(m.base)
+            fun blob(c: Color, fx: Float, fy: Float, r: Float) = drawRect(Brush.radialGradient(listOf(c, Color.Transparent), Offset(w * fx, h * fy), w * r))
+            blob(m.b1, 0.2f, 0.7f, 0.7f); blob(m.b2, 0.85f, 0.75f, 0.65f); blob(m.b3, 0.4f, 0.12f, 0.6f)
+            if (m.streaks) for (k in 0 until 9) drawRect(Color.Black.copy(alpha = 0.10f), Offset(0f, h * k / 9f), Size(w, h * 0.045f))
+        }
+        Text(m.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable fun SectionHeader(t: String) = Row(Modifier.padding(start = 20.dp, top = 26.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(t, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+    Icon(Icons.Rounded.ChevronRight, null, tint = Grey, modifier = Modifier.padding(start = 4.dp).size(22.dp))
+}
+
+@Composable fun TileSq(song: Song, label: String, caption: String, size: Dp, onClick: () -> Unit) {
+    Column(Modifier.width(size).tap { onClick() }) {
+        Box(Modifier.size(size).clip(RoundedCornerShape(30.dp)).background(Color(0xFF1C1C1E))) {
+            Icon(Icons.Rounded.MusicNote, null, tint = Color.Gray, modifier = Modifier.align(Alignment.Center))
+            AsyncImage(model = song.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF4DFF9A).copy(0.18f), Color.Transparent, Color(0xFF3D5BFF).copy(0.25f)))))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Color.Black.copy(0.6f))))
+            Text(label, Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 14.dp, end = 12.dp), color = Color.White,
+                fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(caption, Modifier.padding(top = 8.dp, start = 4.dp), color = Grey, fontSize = 12.sp, lineHeight = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable fun HomeDiscovery(songs: List<Song>, onProfile: () -> Unit) {
+    val moods = remember {
+        listOf(
+            MoodDef("Cheerful", Color(0xFFE8506A), Color(0xFFFF9AD5), Color(0xFFFFA52A), Color(0xFFFF3B1F), false),
+            MoodDef("Training", Color(0xFFFF7A1A), Color(0xFFFFB347), Color(0xFF7A1208), Color(0xFFFF5A1F), true),
+            MoodDef("Chill", Color(0xFF2A9D8F), Color(0xFF4DA3FF), Color(0xFF8AE2D0), Color(0xFF1B4DB3), false),
+            MoodDef("Focus", Color(0xFF5B3FD6), Color(0xFFB06BFF), Color(0xFF2D1B8A), Color(0xFF7B5CFF), false))
+    }
+    val likedSet = Audio.liked
+    val lists = remember(songs, likedSet) {
+        buildList {
+            if (songs.isNotEmpty()) {
+                add(Playlist("Always ok", songs.shuffled(Random(songs.size))))
+                add(Playlist("New", songs.take(20)))
+                val lk = songs.filter { it.id in likedSet }
+                if (lk.isNotEmpty()) add(Playlist("Liked", lk))
+                add(Playlist("Mix", songs.shuffled(Random(7))))
+            }
+        }
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item {
+            Box(Modifier.statusBarsPadding().padding(start = 20.dp, top = 12.dp).size(44.dp).clip(CircleShape).background(Color(0xFF1C1C1E)).tap { onProfile() }, Alignment.Center) {
+                Icon(Icons.Rounded.NorthWest, null, tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 18.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Sound for you", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+                Text("For you", Modifier.padding(start = 28.dp), color = Grey.copy(0.55f), fontSize = 14.sp)
+            }
+        }
+        item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                items(moods) { m -> MoodOrb(m, 156.dp) { if (songs.isNotEmpty()) Audio.play(songs.shuffled(Random(m.label.hashCode())), 0) } }
+            }
+        }
+        if (songs.isEmpty()) item { Text("Grant storage permission and add music files to your phone", Modifier.padding(24.dp), color = Grey) }
+        else {
+            item { SectionHeader("Playlists of the day") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(lists) { p -> TileSq(p.songs.first(), p.name, p.songs.map { it.artist }.distinct().take(4).joinToString(", "), 156.dp) { Audio.play(p.songs, 0) } }
+                }
+            }
+            item { SectionHeader("Recently added") }
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(songs.take(15)) { sg -> TileSq(sg, sg.title, sg.artist, 156.dp) { Audio.play(songs, songs.indexOf(sg)) } }
+                }
+            }
+        }
+    }
+}
+
+@Composable fun UiPreview(i: Int) {
+    val edge = RoundedCornerShape(14.dp)
+    Box(Modifier.fillMaxWidth().height(70.dp).clip(edge).background(Color.Black).border(1.dp, Color.White.copy(0.08f), edge), Alignment.Center) {
+        if (i == 0) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            repeat(3) { Box(Modifier.size(44.dp, 28.dp).clip(RoundedCornerShape(8.dp)).background(TileBg)) }
+        } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFF9AD5), Color(0xFFFF4A2A)))))
+            repeat(2) { Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(Brush.linearGradient(listOf(Color(0xFF4DA3FF), Color(0xFF2D1B8A))))) }
+        }
+    }
+}
+
 // ---------- Opening animation ----------
 const val FLYER_ASPECT = 0.7521f
 
@@ -830,7 +933,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         "Fluid" to "Bubbles that stretch into a pill, on a frosted dock",
         "Capsule" to "Hold and swipe left or right on a glowing capsule",
         "Minimal" to "Thin icons with Home, Discovery and Collection")
-    Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
+    Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconBtn(Icons.Rounded.ArrowBack) { onClose() }
             Text("Settings", Modifier.weight(1f), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
@@ -839,6 +942,22 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         Row(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onRescan() }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Refresh, null, tint = Green)
             Text("Rescan music files", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("App UI", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles").forEachIndexed { i, (name, desc) ->
+            val sel = Audio.uiStyle == i
+            val shape = RoundedCornerShape(22.dp)
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).background(TileBg)
+                .border(if (sel) 2.dp else 0.dp, if (sel) Green else Color.Transparent, shape)
+                .tap { Audio.chooseUiStyle(i) }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(name, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text(desc, color = Grey, fontSize = 13.sp)
+                    Spacer(Modifier.height(10.dp))
+                    UiPreview(i)
+                }
+                if (sel) Icon(Icons.Rounded.CheckCircle, null, tint = Green, modifier = Modifier.padding(start = 12.dp))
+            }
         }
         Text("Theme colour", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(TileBg).padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
