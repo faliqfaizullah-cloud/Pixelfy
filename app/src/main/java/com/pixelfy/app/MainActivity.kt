@@ -649,8 +649,8 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
 class MoodDef(val label: String, val base: Color, val b1: Color, val b2: Color, val b3: Color, val streaks: Boolean)
 class Playlist(val name: String, val songs: List<Song>)
 
-@Composable fun MoodOrb(m: MoodDef, size: Dp, onClick: () -> Unit) {
-    Box(Modifier.size(size).clip(CircleShape).tap { onClick() }, Alignment.Center) {
+@Composable fun MoodOrb(m: MoodDef, d: Dp, onClick: () -> Unit) {
+    Box(Modifier.size(d).clip(CircleShape).tap { onClick() }, Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val w = size.width; val h = size.height
             drawRect(m.base)
