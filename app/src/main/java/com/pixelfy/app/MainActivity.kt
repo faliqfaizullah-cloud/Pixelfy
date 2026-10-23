@@ -2,7 +2,11 @@ package com.pixelfy.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.os.Build
+import android.widget.Toast
+import androidx.compose.ui.graphics.drawscope.rotate
 import android.util.Log
 import java.io.File
 import android.os.Bundle
@@ -161,7 +165,9 @@ class MainActivity : ComponentActivity() {
     var screen by remember { mutableIntStateOf(0) }
     var splash by remember { mutableStateOf(true) }
     val glass = Audio.uiStyle == 2
-    val tabIdx = if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
+    val red = Audio.uiStyle == 3
+    var showTools by remember { mutableStateOf(false) }
+    val tabIdx = if (red) tab.coerceAtMost(1) else if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
     val crashFile = remember { File(ctx.filesDir, "crash.txt") }
     var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
     crash?.let { txt ->
@@ -184,6 +190,7 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+    if (red) RedAmbient()
     val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
     var barsH by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
@@ -194,7 +201,10 @@ class MainActivity : ComponentActivity() {
                 (slideOutHorizontally(spring(stiffness = 300f)) { -it / 6 * d } + fadeOut(tween(160)))
         }, label = "tab") { t ->
             Box(Modifier.fillMaxSize().padding(bottom = if (glass && t != 0) barsH else 0.dp)) {
-                when (t) {
+                if (red) when (t) {
+                    0 -> HomeGlass(songs, barsH) { screen = 1 }
+                    else -> LibraryRed(songs, barsH, { screen = 1 }) { full = true }
+                } else when (t) {
                     0 -> when (Audio.uiStyle) {
                         1 -> HomeDiscovery(songs) { screen = 1 }
                         2 -> HomeGlass(songs, barsH) { screen = 1 }
@@ -209,7 +219,10 @@ class MainActivity : ComponentActivity() {
     }
     val bars: @Composable () -> Unit = {
         MiniPlayer { full = true }
-        NavBar(tabIdx, { tab = it }) { i ->
+        if (red) NavBarRed(tabIdx, { tab = it }, {
+            if (songs.isNotEmpty()) { val mix = Audio.smartMix(songs); Audio.play(mix, 0); Toast.makeText(ctx, "Smart mix: ${mix.size} songs", Toast.LENGTH_SHORT).show() }
+        }, { showTools = true })
+        else NavBar(tabIdx, { tab = it }) { i ->
             when (i) {
                 0, 3 -> tick++
                 1 -> if (songs.isNotEmpty()) Audio.play(songs.shuffled(), 0)
@@ -217,7 +230,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    if (glass) Box(Modifier.fillMaxSize()) {
+    if (glass || red) Box(Modifier.fillMaxSize()) {
         content()
         Column(Modifier.align(Alignment.BottomCenter).onSizeChanged { barsH = with(density) { it.height.toDp() } }) { bars() }
     } else Column(Modifier.fillMaxSize()) {
@@ -227,6 +240,7 @@ class MainActivity : ComponentActivity() {
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
     AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }) { screen = 0 } }
     AnimatedVisibility(screen == 2, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { SettingsScreen({ tick++ }) { screen = 1 } }
+    AnimatedVisibility(showTools, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ToolsSheet { showTools = false } }
     if (splash) Splash { splash = false }
     }
 }
@@ -371,7 +385,7 @@ class MainActivity : ComponentActivity() {
     val view = LocalView.current
     val liked = s.id in Audio.liked
     val shape = RoundedCornerShape(50)
-    val glass = Audio.uiStyle == 2
+    val glass = Audio.uiStyle >= 2
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(500) } }
@@ -591,7 +605,8 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
     var pos by remember { mutableLongStateOf(0L) }
     var dur by remember { mutableLongStateOf(0L) }
     var drag by remember { mutableStateOf<Float?>(null) }
-    var showLyrics by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(Audio.wantLyrics) }
+    LaunchedEffect(Unit) { Audio.wantLyrics = false }
     var lyricsFull by remember { mutableStateOf(false) }
     val lyr = rememberLyrics(s)
     LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(200) } }
@@ -759,6 +774,8 @@ class Playlist(val name: String, val songs: List<Song>)
     Box(Modifier.fillMaxWidth().height(70.dp).clip(edge).background(Color.Black).border(1.dp, Color.White.copy(0.08f), edge), Alignment.Center) {
         if (i == 0) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             repeat(3) { Box(Modifier.size(44.dp, 28.dp).clip(RoundedCornerShape(8.dp)).background(TileBg)) }
+        } else if (i == 3) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF3A0204), Color(0xFFD00010)))), Alignment.Center) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { repeat(3) { Box(Modifier.size(34.dp, 44.dp).glassPanel(RoundedCornerShape(10.dp))) } }
         } else if (i == 2) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFF9AD5), Color(0xFFFF4A2A)))).border(1.dp, Color.White.copy(0.5f), CircleShape).padding(5.dp)
                 .clip(CircleShape).background(Color.White.copy(0.18f)))
@@ -902,6 +919,279 @@ fun Modifier.glassPanel(shape: Shape): Modifier = clip(shape).background(GlassSt
                     NavGlyph(kinds[i], tint, Modifier.size(28.dp))
                 }
                 Text(label, Modifier.padding(top = 2.dp), color = tint, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+// ---------- "Ember" UI: red fluid glow, glass cards, smart mix and listening tools ----------
+@Composable fun RedAmbient() {
+    val tr = rememberInfiniteTransition(label = "red")
+    val a by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(14000, easing = LinearEasing)), label = "a")
+    val b by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(19000, easing = LinearEasing)), label = "b")
+    val c by tr.animateFloat(0f, 1f, infiniteRepeatable(tween(23000, easing = LinearEasing)), label = "c")
+    Canvas(Modifier.fillMaxSize()) {
+        val w = size.width; val h = size.height; val t = (2 * Math.PI).toFloat()
+        drawRect(Brush.verticalGradient(listOf(Color(0xFF120000), Color(0xFF3A0204), Color(0xFF8A0008)), 0f, h))
+        fun blob(col: Color, cx: Float, cy: Float, r: Float) = drawCircle(Brush.radialGradient(listOf(col, Color.Transparent), Offset(cx, cy), r), r, Offset(cx, cy))
+        blob(Color(0xFFFF3B0A).copy(0.75f), w * (0.30f + 0.15f * sin(t * a)), h * (0.30f + 0.06f * cos(t * b)), w * 0.85f)
+        blob(Color(0xFFFF6A00).copy(0.55f), w * (0.75f + 0.12f * cos(t * b)), h * (0.50f + 0.08f * sin(t * c)), w * 0.75f)
+        blob(Color(0xFFD00010).copy(0.70f), w * (0.20f + 0.15f * sin(t * c)), h * (0.68f + 0.07f * cos(t * a)), w * 0.9f)
+        blob(Color(0xFFFF4A1A).copy(0.45f), w * (0.85f + 0.10f * sin(t * a)), h * (0.20f + 0.05f * cos(t * c)), w * 0.6f)
+        drawRect(Brush.verticalGradient(0f to Color.Black.copy(0.55f), 0.22f to Color.Transparent, 0.85f to Color.Transparent, 1f to Color.Black.copy(0.35f)))
+    }
+}
+
+@Composable fun SparkleGlyph(color: Color, modifier: Modifier) {
+    Canvas(modifier) {
+        val w = size.width; val c = Offset(w / 2f, size.height / 2f)
+        fun star(cx: Float, cy: Float, r: Float) {
+            val p = Path(); p.moveTo(cx, cy - r); p.quadraticBezierTo(cx, cy, cx + r, cy); p.quadraticBezierTo(cx, cy, cx, cy + r)
+            p.quadraticBezierTo(cx, cy, cx - r, cy); p.quadraticBezierTo(cx, cy, cx, cy - r); p.close(); drawPath(p, color)
+        }
+        star(c.x, c.y, w * 0.38f); star(w * 0.82f, w * 0.20f, w * 0.14f)
+        rotate(-25f, c) { drawOval(color.copy(alpha = 0.7f), Offset(w * 0.04f, c.y - w * 0.14f), Size(w * 0.92f, w * 0.28f), style = Stroke(1.4.dp.toPx())) }
+    }
+}
+
+data class TrackInfo(val duration: String = "", val album: String = "", val tags: List<String> = emptyList())
+fun readInfo(ctx: Context, s: Song): TrackInfo = try {
+    val r = MediaMetadataRetriever(); r.setDataSource(ctx, s.uri)
+    fun k(i: Int) = r.extractMetadata(i)?.takeIf { it.isNotBlank() }
+    val dur = k(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+    val tags = mutableListOf<String>()
+    k(MediaMetadataRetriever.METADATA_KEY_GENRE)?.let { tags += it.take(18) }
+    k(MediaMetadataRetriever.METADATA_KEY_YEAR)?.let { tags += it.take(4) }
+    k(MediaMetadataRetriever.METADATA_KEY_MIMETYPE)?.let { tags += it.substringAfter('/').uppercase().replace("MPEG", "MP3").take(6) }
+    k(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()?.let { tags += "${it / 1000} kbps" }
+    val album = k(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: ""
+    r.release()
+    if (tags.size < 2) tags += "Local file"
+    TrackInfo(fmt(dur), album, tags)
+} catch (_: Exception) { TrackInfo("", "", listOf("Local file")) }
+
+@Composable fun RedCircle(icon: ImageVector, tint: Color, onClick: () -> Unit) =
+    Box(Modifier.size(38.dp).glassPanel(CircleShape).tap { onClick() }, Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp)) }
+
+@Composable fun RedChip(t: String, orange: Boolean) {
+    Box(Modifier.clip(CircleShape).background(if (orange) Color(0xFFE0521A).copy(0.55f) else Color.White.copy(0.14f))
+        .border(1.dp, Color.White.copy(0.18f), CircleShape).padding(horizontal = 16.dp, vertical = 9.dp)) {
+        Text(t, color = Color.White.copy(0.9f), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable fun RedCard(s: Song, list: List<Song>, onFocus: () -> Unit, onOpenPlayer: () -> Unit) {
+    val view = LocalView.current
+    val liked = s.id in Audio.liked
+    val isCur = Audio.current?.id == s.id
+    val playing = isCur && Audio.playing
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Column(Modifier.width(200.dp).glassPanel(RoundedCornerShape(24.dp))
+            .pointerInput(s.id) { detectTapGestures(onLongPress = { view.buzz(true); menu = true }, onTap = { view.buzz(); onFocus(); Audio.play(list, list.indexOf(s)) }) }
+            .padding(10.dp)) {
+            Box(Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black.copy(0.25f))) {
+                Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(0.5f), modifier = Modifier.align(Alignment.Center))
+                AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                Box(Modifier.align(Alignment.TopCenter).padding(top = 12.dp).size(46.dp, 24.dp).clip(CircleShape).background(Color.White.copy(0.22f)), Alignment.Center) {
+                    if (playing) Icon(Icons.Rounded.GraphicEq, null, tint = Color.White, modifier = Modifier.size(16.dp)) else SparkleGlyph(Color.White, Modifier.size(16.dp))
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(s.title, Modifier.weight(1f), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+                    RedCircle(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (liked) Color(0xFFFF8A7A) else Color.White) { Audio.toggleLike(s) }
+                    Box {
+                        RedCircle(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, Color.White) { if (isCur) Audio.toggle() else { onFocus(); Audio.play(list, list.indexOf(s)) } }
+                        val n = Audio.plays[s.id] ?: 0
+                        if (n > 0) Box(Modifier.align(Alignment.BottomEnd).offset(4.dp, 4.dp).size(17.dp).clip(CircleShape).background(Color.White.copy(0.28f)), Alignment.Center) {
+                            Text("${minOf(n, 99)}", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    RedCircle(Icons.Rounded.Subject, Color.White) { onFocus(); if (!isCur) Audio.play(list, list.indexOf(s)); Audio.wantLyrics = true; onOpenPlayer() }
+                }
+            }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("Play next") }, onClick = { Audio.playNext(s); menu = false })
+            DropdownMenuItem(text = { Text("Add to queue") }, onClick = { Audio.addToQueue(s); menu = false })
+            DropdownMenuItem(text = { Text(if (liked) "Remove from liked" else "Add to liked") }, onClick = { Audio.toggleLike(s); menu = false })
+        }
+    }
+}
+
+@Composable fun RedDetail(s: Song, list: List<Song>) {
+    val ctx = LocalContext.current
+    val info by produceState(TrackInfo(), s.id) { value = withContext(Dispatchers.IO) { readInfo(ctx, s) } }
+    val arts = remember(s.id, list) { (listOf(s) + list.filter { it.id != s.id }).take(3) }
+    Column(Modifier.padding(horizontal = 20.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Art(s, Modifier.size(52.dp), CircleShape)
+            Spacer(Modifier.width(12.dp))
+            Text(if (info.duration.isBlank()) s.title else "${s.title} · ${info.duration}", Modifier.weight(1f, fill = false), color = Color.White, fontSize = 20.sp,
+                fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.width(8.dp))
+            Row(Modifier.glassPanel(CircleShape).padding(horizontal = 10.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.FlashOn, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                Text("${Audio.plays[s.id] ?: 0}", Modifier.padding(start = 3.dp), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        Text(s.artist + if (info.album.isNotBlank()) " · " + info.album else "", Modifier.padding(start = 64.dp, top = 6.dp), color = Color.White.copy(0.65f), fontSize = 15.sp, lineHeight = 21.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Box(Modifier.padding(start = 64.dp, top = 14.dp).fillMaxWidth().height(1.dp).background(Color.White.copy(0.25f)))
+        Row(Modifier.padding(top = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(150.dp)) {
+                val spots = listOf(Triple(0.dp, 28.dp, -6f), Triple(52.dp, 0.dp, 20f), Triple(48.dp, 56.dp, -28f))
+                arts.forEachIndexed { k, sg ->
+                    val (x, y, rot) = spots[k]
+                    Box(Modifier.offset(x, y).size(86.dp).graphicsLayer { rotationZ = rot }.clip(RoundedCornerShape(22.dp)).background(Color.Black)) {
+                        AsyncImage(model = sg.art, contentDescription = null, modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0.85f }, contentScale = ContentScale.Crop)
+                    }
+                }
+            }
+            Column(Modifier.padding(start = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                info.tags.chunked(2).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { row.forEachIndexed { k, t -> RedChip(t, k % 2 == 1) } } }
+            }
+        }
+    }
+}
+
+@Composable fun RedRow(s: Song, list: List<Song>) {
+    val liked = s.id in Audio.liked
+    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).glassPanel(RoundedCornerShape(20.dp)).tap { Audio.play(list, list.indexOf(s)) }.padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Art(s, Modifier.size(48.dp), RoundedCornerShape(14.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(s.title, color = if (Audio.current?.id == s.id) Color(0xFFFFB199) else Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(s.artist, color = Color.White.copy(0.6f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = if (liked) Color(0xFFFF8A7A) else Color.White) { Audio.toggleLike(s) }
+    }
+}
+
+@Composable fun LibraryRed(songs: List<Song>, bottomPad: Dp, onProfile: () -> Unit, onOpenPlayer: () -> Unit) {
+    var tabLiked by remember { mutableStateOf(false) }
+    var sortMode by remember { mutableIntStateOf(0) }
+    var sortMenu by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var focusId by remember { mutableStateOf<Long?>(null) }
+    val sorts = listOf("Newest", "Oldest", "A–Z", "Artist", "Most played")
+    val liked = Audio.liked; val plays = Audio.plays
+    val list = remember(songs, tabLiked, sortMode, query, liked, plays) {
+        var l = if (tabLiked) songs.filter { it.id in liked } else songs
+        if (query.isNotBlank()) l = l.filter { it.title.contains(query, true) || it.artist.contains(query, true) }
+        when (sortMode) { 1 -> l.reversed(); 2 -> l.sortedBy { it.title.lowercase() }; 3 -> l.sortedBy { it.artist.lowercase() }; 4 -> l.sortedByDescending { plays[it.id] ?: 0 }; else -> l }
+    }
+    val focus = list.firstOrNull { it.id == focusId } ?: Audio.current?.takeIf { c -> list.any { it.id == c.id } } ?: list.firstOrNull()
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPad + 16.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.glassPanel(CircleShape).padding(4.dp)) {
+                    listOf("Songs", "Liked").forEachIndexed { i, t ->
+                        val on = (i == 1) == tabLiked
+                        val bg by animateColorAsState(if (on) Color.White else Color.Transparent, label = "seg")
+                        Box(Modifier.clip(CircleShape).background(bg).tap { tabLiked = i == 1 }.padding(horizontal = 22.dp, vertical = 12.dp)) {
+                            Text(t, color = if (on) Color.Black else Color.White.copy(0.85f), fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Box(Modifier.size(52.dp).glassPanel(CircleShape).tap { onProfile() }, Alignment.Center) {
+                    Text(Audio.userName.trim().take(1).uppercase().ifEmpty { "J" }, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 22.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Library", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
+                Text("${list.size} tracks", Modifier.padding(start = 10.dp, top = 8.dp), color = Color.White.copy(0.6f), fontSize = 14.sp)
+                Spacer(Modifier.weight(1f))
+                Box {
+                    Row(Modifier.glassPanel(CircleShape).tap { sortMenu = true }.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(sorts[sortMode], color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Icon(Icons.Rounded.KeyboardArrowDown, null, tint = Color.White, modifier = Modifier.padding(start = 4.dp).size(18.dp))
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        sorts.forEachIndexed { i, t -> DropdownMenuItem(text = { Text(t) }, onClick = { sortMode = i; sortMenu = false }) }
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Box(Modifier.size(46.dp).glassPanel(CircleShape).tap { searching = !searching; if (!searching) query = "" }, Alignment.Center) {
+                    Icon(if (searching) Icons.Rounded.Close else Icons.Rounded.Search, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+        if (searching) item {
+            TextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).glassPanel(CircleShape), singleLine = true,
+                placeholder = { Text("Search songs or artists", color = Color.White.copy(0.6f)) },
+                colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White))
+        }
+        if (songs.isEmpty()) item { Text("Grant storage permission and add music files to your phone", Modifier.padding(24.dp), color = Color.White.copy(0.7f)) }
+        else if (list.isEmpty()) item { Text(if (tabLiked) "No liked songs yet. Tap the heart on a song." else "No songs match your search.", Modifier.padding(24.dp), color = Color.White.copy(0.7f)) }
+        else {
+            item {
+                LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(list, key = { it.id }) { sg -> RedCard(sg, list, { focusId = sg.id }, onOpenPlayer) }
+                }
+            }
+            if (focus != null) item { RedDetail(focus, list) }
+            item { Text("All tracks", Modifier.padding(start = 20.dp, top = 28.dp, bottom = 8.dp), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+            items(list, key = { it.id }) { sg -> RedRow(sg, list) }
+        }
+    }
+}
+
+@Composable fun RedNavCircle(icon: ImageVector, on: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(60.dp).glassPanel(CircleShape).then(if (on) Modifier.background(Color.White.copy(0.12f)) else Modifier).tap { onClick() }, Alignment.Center) {
+        Icon(icon, null, tint = Color.White.copy(if (on) 1f else 0.75f), modifier = Modifier.size(26.dp))
+    }
+}
+
+/** Home, Library, a wide "Generate" pill (smart mix) and a bell that opens the listening tools. */
+@Composable fun NavBarRed(sel: Int, onSelect: (Int) -> Unit, onGenerate: () -> Unit, onTools: () -> Unit) {
+    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        RedNavCircle(Icons.Rounded.Home, sel == 0) { onSelect(0) }
+        RedNavCircle(Icons.Rounded.Album, sel == 1) { onSelect(1) }
+        Row(Modifier.weight(1f).height(60.dp).glassPanel(CircleShape).tap(true) { onGenerate() }.padding(start = 22.dp, end = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Generate", Modifier.weight(1f), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+            Box(Modifier.size(46.dp).clip(CircleShape).background(Color.White), Alignment.Center) { SparkleGlyph(Color(0xFF1A1A1A), Modifier.size(26.dp)) }
+        }
+        RedNavCircle(Icons.Rounded.Notifications, false) { onTools() }
+    }
+}
+
+@Composable fun OptionChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(Modifier.clip(CircleShape).background(if (selected) Color.White else Color.White.copy(0.12f)).tap { onClick() }.padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Text(label, color = if (selected) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Listening tools: sleep timer, playback speed and equalizer presets. */
+@Composable fun ToolsSheet(onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
+    val top = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(0.55f)).pointerInput(Unit) { detectTapGestures { onClose() } }) {
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().clip(top).background(Color(0xFF2A0508).copy(0.97f)).border(1.dp, GlassStyle.rim, top)
+            .pointerInput(Unit) { detectTapGestures { } }.navigationBarsPadding().padding(20.dp)) {
+            Text("Listening tools", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+            val left = Audio.sleepEnd - now
+            Text("Sleep timer", Modifier.padding(top = 18.dp, bottom = 4.dp), color = Color.White.copy(0.7f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            if (Audio.sleepEnd > 0 && left > 0) Text("Music fades out in ${fmt(left)}", Modifier.padding(bottom = 8.dp), color = Color(0xFFFFB199), fontSize = 14.sp)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OptionChip("Off", Audio.sleepEnd == 0L) { Audio.cancelSleep() }
+                listOf(5, 15, 30, 45, 60).forEach { m -> OptionChip("$m min", false) { Audio.sleepIn(m) } }
+                OptionChip("End of song", Audio.sleepEnd == -1L) { Audio.sleepAtEnd() }
+            }
+            Text("Speed", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White.copy(0.7f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { v -> OptionChip(if (v == 1f) "Normal" else "${v}x", Audio.speed == v) { Audio.chooseSpeed(v) } }
+            }
+            Text("Equalizer", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White.copy(0.7f), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Off", "Bass", "Vocal", "Treble").forEachIndexed { i, t -> OptionChip(t, Audio.eqPreset == i) { Audio.chooseEq(i) } }
             }
         }
     }
@@ -1105,7 +1395,8 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         }
         Text("App UI", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles",
-            "Glass" to "Frosted glass, glowing orbs and translucent bars").forEachIndexed { i, (name, desc) ->
+            "Glass" to "Frosted glass, glowing orbs and translucent bars",
+            "Ember" to "Red glow, glass cards, smart mix and listening tools").forEachIndexed { i, (name, desc) ->
             val sel = Audio.uiStyle == i
             val shape = RoundedCornerShape(22.dp)
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).background(TileBg)
