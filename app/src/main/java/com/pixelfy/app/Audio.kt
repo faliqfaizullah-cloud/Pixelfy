@@ -11,6 +11,8 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.*
 import kotlin.math.abs
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.math.ln
 import kotlin.random.Random
 import androidx.media3.common.AudioAttributes
@@ -19,6 +21,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+
+data class UserPlaylist(val id: Long, val name: String, val songIds: List<Long>)
 
 data class Song(val id: Long, val title: String, val artist: String, val albumId: Long, val uri: Uri) {
     val art: Uri get() = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
@@ -66,6 +70,11 @@ object Audio {
         accent = ctx.getSharedPreferences("pixelfy", 0).getInt("accent", 0)
         uiStyle = ctx.getSharedPreferences("pixelfy", 0).getInt("uiStyle", 0)
         userName = ctx.getSharedPreferences("pixelfy", 0).getString("userName", "You") ?: "You"
+        loadPlaylists(ctx.getSharedPreferences("pixelfy", 0).getString("playlists", "[]") ?: "[]")
+        bgType = ctx.getSharedPreferences("pixelfy", 0).getInt("bgType", 0)
+        bgUri = ctx.getSharedPreferences("pixelfy", 0).getString("bgUri", "") ?: ""
+        bgDim = ctx.getSharedPreferences("pixelfy", 0).getFloat("bgDim", 0.45f)
+        showLabels = ctx.getSharedPreferences("pixelfy", 0).getBoolean("labels", false)
         plays = parsePlays(ctx.getSharedPreferences("pixelfy", 0).getString("plays", "") ?: "")
         exo = ExoPlayer.Builder(ctx)
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -161,6 +170,42 @@ object Audio {
             s to (-ln(rnd.nextDouble().coerceAtLeast(1e-9)) / w)
         }.sortedBy { it.second }.map { it.first }.take(50)
     }
+    // ---------------- playlists, background, labels ----------------
+    var playlists by mutableStateOf(listOf<UserPlaylist>())
+    var pickSong by mutableStateOf<Song?>(null)             // song waiting to be added to a playlist (shows the picker)
+    var bgType by mutableIntStateOf(0)                      // 0 = theme, 1 = picture, 2 = video
+    var bgUri by mutableStateOf("")
+    var bgDim by mutableFloatStateOf(0.45f)
+    var showLabels by mutableStateOf(false)
+    private fun prefs() = ctx.getSharedPreferences("pixelfy", 0)
+    private fun savePlaylists() {
+        val arr = JSONArray()
+        playlists.forEach { p -> arr.put(JSONObject().put("id", p.id).put("name", p.name).put("songs", JSONArray(p.songIds))) }
+        prefs().edit().putString("playlists", arr.toString()).apply()
+    }
+    private fun loadPlaylists(s: String) {
+        try {
+            val arr = JSONArray(s)
+            playlists = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i); val sa = o.getJSONArray("songs")
+                UserPlaylist(o.getLong("id"), o.getString("name"), (0 until sa.length()).map { sa.getLong(it) })
+            }
+        } catch (_: Exception) {}
+    }
+    fun createPlaylist(name: String): Long { val id = System.currentTimeMillis(); playlists = playlists + UserPlaylist(id, name, emptyList()); savePlaylists(); return id }
+    fun renamePlaylist(id: Long, name: String) { playlists = playlists.map { if (it.id == id) it.copy(name = name) else it }; savePlaylists() }
+    fun deletePlaylist(id: Long) { playlists = playlists.filter { it.id != id }; savePlaylists() }
+    fun addToPlaylist(id: Long, songId: Long) { playlists = playlists.map { if (it.id == id && songId !in it.songIds) it.copy(songIds = it.songIds + songId) else it }; savePlaylists() }
+    fun removeFromPlaylist(id: Long, songId: Long) { playlists = playlists.map { if (it.id == id) it.copy(songIds = it.songIds - songId) else it }; savePlaylists() }
+    fun moveInPlaylist(id: Long, from: Int, to: Int) {
+        playlists = playlists.map {
+            if (it.id == id && from in it.songIds.indices && to in it.songIds.indices) it.copy(songIds = it.songIds.toMutableList().apply { add(to, removeAt(from)) }) else it
+        }
+        savePlaylists()
+    }
+    fun chooseBackground(type: Int, uri: String) { bgType = type; bgUri = uri; prefs().edit().putInt("bgType", type).putString("bgUri", uri).apply() }
+    fun saveDim(v: Float) { bgDim = v; prefs().edit().putFloat("bgDim", v).apply() }
+    fun chooseLabels(on: Boolean) { showLabels = on; prefs().edit().putBoolean("labels", on).apply() }
     fun saveName(n: String) { userName = n; ctx.getSharedPreferences("pixelfy", 0).edit().putString("userName", n).apply() }
     fun chooseTheme(i: Int) { theme = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("theme", i).apply() }
     fun toggleShuffle() { shuffle = !shuffle; exo.shuffleModeEnabled = shuffle }

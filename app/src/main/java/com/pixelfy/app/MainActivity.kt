@@ -4,7 +4,16 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.Context
 import android.media.MediaMetadataRetriever
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.view.TextureView
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import android.widget.Toast
 import androidx.compose.ui.graphics.drawscope.rotate
 import android.util.Log
@@ -167,7 +176,7 @@ class MainActivity : ComponentActivity() {
     val glass = Audio.uiStyle == 2
     val red = Audio.uiStyle == 3
     var showTools by remember { mutableStateOf(false) }
-    val tabIdx = if (red) tab.coerceAtMost(1) else if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
+    val tabIdx = if (red) tab.coerceAtMost(2) else if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
     val crashFile = remember { File(ctx.filesDir, "crash.txt") }
     var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
     crash?.let { txt ->
@@ -190,7 +199,7 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-    if (red) RedAmbient()
+    if (Audio.bgType != 0) UserBackground() else if (red) RedAmbient()
     val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
     var barsH by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
@@ -203,7 +212,8 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.fillMaxSize().padding(bottom = if (glass && t != 0) barsH else 0.dp)) {
                 if (red) when (t) {
                     0 -> HomeGlass(songs, barsH) { screen = 1 }
-                    else -> LibraryRed(songs, barsH, { screen = 1 }) { full = true }
+                    1 -> LibraryRed(songs, barsH, { screen = 1 }) { full = true }
+                    else -> PlaylistsRoot(songs, barsH, null)
                 } else when (t) {
                     0 -> when (Audio.uiStyle) {
                         1 -> HomeDiscovery(songs) { screen = 1 }
@@ -238,10 +248,14 @@ class MainActivity : ComponentActivity() {
         bars()
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
-    AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }) { screen = 0 } }
+    AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }, { screen = 3 }) { screen = 0 } }
     AnimatedVisibility(screen == 2, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { SettingsScreen({ tick++ }) { screen = 1 } }
+    AnimatedVisibility(screen == 3, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) {
+        Box(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) { PlaylistsRoot(songs, 0.dp) { screen = 1 } }
+    }
     AnimatedVisibility(showTools, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ToolsSheet { showTools = false } }
     if (splash) Splash { splash = false }
+    Audio.pickSong?.let { PlaylistPicker(it) { Audio.pickSong = null } }
     }
 }
 
@@ -291,6 +305,7 @@ class MainActivity : ComponentActivity() {
             Text(s.artist, color = Grey, fontSize = 13.sp, maxLines = 1)
         }
         val liked = s.id in Audio.liked
+        IconBtn(Icons.Rounded.PlaylistAdd, tint = Grey) { Audio.pickSong = s }
         IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = if (liked) Green else Grey) { Audio.toggleLike(s) }
     }
 }
@@ -641,6 +656,7 @@ fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, (ms / 1000) % 60)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("Music", Modifier.weight(1f).padding(start = 4.dp), color = white, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold)
+                IconBtn(Icons.Rounded.PlaylistAdd, tint = white) { Audio.pickSong = s }
                 IconBtn(Icons.Rounded.KeyboardArrowDown, tint = white) { onClose() }
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
@@ -918,7 +934,7 @@ fun Modifier.glassPanel(shape: Shape): Modifier = clip(shape).background(GlassSt
                     Box(Modifier.matchParentSize().clip(CircleShape).background(pill))
                     NavGlyph(kinds[i], tint, Modifier.size(28.dp))
                 }
-                Text(label, Modifier.padding(top = 2.dp), color = tint, fontSize = 12.sp)
+                if (Audio.showLabels) Text(label, Modifier.padding(top = 2.dp), color = tint, fontSize = 12.sp)
             }
         }
     }
@@ -1015,6 +1031,7 @@ fun readInfo(ctx: Context, s: Song): TrackInfo = try {
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Play next") }, onClick = { Audio.playNext(s); menu = false })
             DropdownMenuItem(text = { Text("Add to queue") }, onClick = { Audio.addToQueue(s); menu = false })
+            DropdownMenuItem(text = { Text("Add to playlist") }, onClick = { Audio.pickSong = s; menu = false })
             DropdownMenuItem(text = { Text(if (liked) "Remove from liked" else "Add to liked") }, onClick = { Audio.toggleLike(s); menu = false })
         }
     }
@@ -1064,6 +1081,7 @@ fun readInfo(ctx: Context, s: Song): TrackInfo = try {
             Text(s.title, color = if (Audio.current?.id == s.id) Color(0xFFFFB199) else Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(s.artist, color = Color.White.copy(0.6f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        IconBtn(Icons.Rounded.PlaylistAdd, tint = Color.White) { Audio.pickSong = s }
         IconBtn(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, tint = if (liked) Color(0xFFFF8A7A) else Color.White) { Audio.toggleLike(s) }
     }
 }
@@ -1143,21 +1161,21 @@ fun readInfo(ctx: Context, s: Song): TrackInfo = try {
 }
 
 @Composable fun RedNavCircle(icon: ImageVector, on: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(60.dp).glassPanel(CircleShape).then(if (on) Modifier.background(Color.White.copy(0.12f)) else Modifier).tap { onClick() }, Alignment.Center) {
+    Box(Modifier.size(60.dp).glassPanel(CircleShape).then(if (on) Modifier.background(Color.White.copy(0.14f)) else Modifier).tap { onClick() }, Alignment.Center) {
         Icon(icon, null, tint = Color.White.copy(if (on) 1f else 0.75f), modifier = Modifier.size(26.dp))
     }
 }
 
-/** Home, Library, a wide "Generate" pill (smart mix) and a bell that opens the listening tools. */
+@Composable fun RowScope.NavCell(content: @Composable () -> Unit) { Box(Modifier.weight(1f), Alignment.Center) { content() } }
+
+/** Icons only, full width, five equal cells: Home, Library, Generate (smart mix), Playlists, Tools (bell). */
 @Composable fun NavBarRed(sel: Int, onSelect: (Int) -> Unit, onGenerate: () -> Unit, onTools: () -> Unit) {
-    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        RedNavCircle(Icons.Rounded.Home, sel == 0) { onSelect(0) }
-        RedNavCircle(Icons.Rounded.Album, sel == 1) { onSelect(1) }
-        Row(Modifier.weight(1f).height(60.dp).glassPanel(CircleShape).tap(true) { onGenerate() }.padding(start = 22.dp, end = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Generate", Modifier.weight(1f), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-            Box(Modifier.size(46.dp).clip(CircleShape).background(Color.White), Alignment.Center) { SparkleGlyph(Color(0xFF1A1A1A), Modifier.size(26.dp)) }
-        }
-        RedNavCircle(Icons.Rounded.Notifications, false) { onTools() }
+    Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        NavCell { RedNavCircle(Icons.Rounded.Home, sel == 0) { onSelect(0) } }
+        NavCell { RedNavCircle(Icons.Rounded.Album, sel == 1) { onSelect(1) } }
+        NavCell { Box(Modifier.size(66.dp).clip(CircleShape).background(Color.White).tap(true) { onGenerate() }, Alignment.Center) { SparkleGlyph(Color(0xFF1A1A1A), Modifier.size(32.dp)) } }
+        NavCell { RedNavCircle(Icons.Rounded.QueueMusic, sel == 2) { onSelect(2) } }
+        NavCell { RedNavCircle(Icons.Rounded.Notifications, false) { onTools() } }
     }
 }
 
@@ -1195,6 +1213,184 @@ fun readInfo(ctx: Context, s: Song): TrackInfo = try {
             }
         }
     }
+}
+
+// ---------- Custom background (picture or video) ----------
+@Composable fun UserBackground() {
+    val uri = remember(Audio.bgUri) { Uri.parse(Audio.bgUri) }
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (Audio.bgType == 2) VideoBackground(uri)
+        else AsyncImage(model = uri, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(Audio.bgDim)))
+    }
+}
+
+/** Muted, looping video behind the app. A separate player, so it never interrupts your music. */
+@Composable fun VideoBackground(uri: Uri) {
+    val ctx = LocalContext.current
+    val player = remember(uri) {
+        ExoPlayer.Builder(ctx).build().apply {
+            setMediaItem(MediaItem.fromUri(uri)); repeatMode = Player.REPEAT_MODE_ALL; volume = 0f
+            videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING; prepare(); playWhenReady = true
+        }
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+    LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { player.pause() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { player.play() }
+    AndroidView(factory = { c -> TextureView(c).also { player.setVideoTextureView(it) } }, modifier = Modifier.fillMaxSize())
+}
+
+// ---------- Playlists ----------
+class PlView(val id: Long, val name: String, val songs: List<Song>, val editable: Boolean)
+
+/** Your playlists first, then automatic ones (Liked, Most played, Recently added). */
+fun resolvePlaylists(songs: List<Song>): List<PlView> {
+    val byId = songs.associateBy { it.id }
+    val mine = Audio.playlists.map { p -> PlView(p.id, p.name, p.songIds.mapNotNull { byId[it] }, true) }
+    val auto = listOf(
+        PlView(-1, "Liked songs", songs.filter { it.id in Audio.liked }, false),
+        PlView(-2, "Most played", songs.filter { (Audio.plays[it.id] ?: 0) > 0 }.sortedByDescending { Audio.plays[it.id] ?: 0 }.take(50), false),
+        PlView(-3, "Recently added", songs.take(30), false))
+    return mine + auto
+}
+
+@Composable fun PlCover(songs: List<Song>, d: Dp, corner: Dp = 16.dp) {
+    Box(Modifier.size(d).clip(RoundedCornerShape(corner)).background(Color.White.copy(0.12f)), Alignment.Center) {
+        if (songs.isEmpty()) Icon(Icons.Rounded.QueueMusic, null, tint = Color.White.copy(0.7f), modifier = Modifier.size(d / 2))
+        else if (songs.size < 4) AsyncImage(model = songs[0].art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Column(Modifier.fillMaxSize()) {
+            for (rr in 0..1) Row(Modifier.weight(1f)) {
+                for (cc in 0..1) AsyncImage(model = songs[rr * 2 + cc].art, contentDescription = null, modifier = Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop)
+            }
+        }
+    }
+}
+
+@Composable fun NamePlaylistDialog(title: String, initial: String, onDismiss: () -> Unit, onOk: (String) -> Unit) {
+    var t by remember { mutableStateOf(initial) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) },
+        text = { TextField(t, { t = it.take(30) }, singleLine = true, placeholder = { Text("Playlist name") }) },
+        confirmButton = { TextButton(onClick = { if (t.isNotBlank()) onOk(t.trim()) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}
+
+/** Shown from the playlist button on any song: tick the playlists it should be in, or create a new one. */
+@Composable fun PlaylistPicker(song: Song, onDismiss: () -> Unit) {
+    var creating by remember { mutableStateOf(false) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Add to playlist") },
+        text = {
+            Column {
+                TextButton(onClick = { creating = true }) { Icon(Icons.Rounded.Add, null); Text("New playlist", Modifier.padding(start = 6.dp)) }
+                LazyColumn(Modifier.heightIn(max = 280.dp)) {
+                    items(Audio.playlists, key = { it.id }) { p ->
+                        val has = song.id in p.songIds
+                        Row(Modifier.fillMaxWidth().tap { if (has) Audio.removeFromPlaylist(p.id, song.id) else Audio.addToPlaylist(p.id, song.id) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(p.name, Modifier.weight(1f), fontSize = 16.sp)
+                            if (has) Icon(Icons.Rounded.Check, null)
+                        }
+                    }
+                }
+                if (Audio.playlists.isEmpty()) Text("No playlists yet", color = Grey, fontSize = 14.sp)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } })
+    if (creating) NamePlaylistDialog("New playlist", "", { creating = false }) { n -> Audio.addToPlaylist(Audio.createPlaylist(n), song.id); creating = false }
+}
+
+@Composable fun PlaylistsRoot(songs: List<Song>, bottomPad: Dp, onClose: (() -> Unit)?) {
+    var openId by remember { mutableStateOf<Long?>(null) }
+    if (onClose != null) BackHandler(onBack = onClose)
+    val open = openId
+    if (open != null) { BackHandler { openId = null }; PlaylistDetail(open, songs, bottomPad) { openId = null } }
+    else PlaylistList(songs, bottomPad, onClose) { openId = it }
+}
+
+@Composable fun PlaylistList(songs: List<Song>, bottomPad: Dp, onClose: (() -> Unit)?, onOpen: (Long) -> Unit) {
+    var creating by remember { mutableStateOf(false) }
+    val all = resolvePlaylists(songs)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPad + 16.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().then(if (onClose == null) Modifier.statusBarsPadding() else Modifier).padding(start = 20.dp, end = 20.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (onClose != null) IconBtn(Icons.Rounded.KeyboardArrowDown) { onClose() }
+                Text("Playlists", Modifier.weight(1f), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
+                Row(Modifier.glassPanel(CircleShape).tap(true) { creating = true }.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Add, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Text("New", Modifier.padding(start = 4.dp), color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+        if (Audio.playlists.isEmpty()) item { Text("Tap New to make a playlist, then use the playlist button on any song to add it.", Modifier.padding(horizontal = 20.dp, vertical = 14.dp), color = Color.White.copy(0.65f), fontSize = 14.sp) }
+        items(all, key = { it.id }) { p ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp).glassPanel(RoundedCornerShape(22.dp)).tap { onOpen(p.id) }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                PlCover(p.songs, 64.dp)
+                Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
+                    Text(p.name, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (p.editable) "${p.songs.size} songs" else "${p.songs.size} songs · automatic", color = Color.White.copy(0.6f), fontSize = 13.sp)
+                }
+                Icon(Icons.Rounded.ChevronRight, null, tint = Color.White.copy(0.6f))
+            }
+        }
+    }
+    if (creating) NamePlaylistDialog("New playlist", "", { creating = false }) { n -> Audio.createPlaylist(n); creating = false }
+}
+
+@Composable fun PlaylistDetail(id: Long, songs: List<Song>, bottomPad: Dp, onBack: () -> Unit) {
+    val p = resolvePlaylists(songs).firstOrNull { it.id == id }
+    LaunchedEffect(p == null) { if (p == null) onBack() }
+    if (p == null) return
+    var menu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = bottomPad + 16.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBtn(Icons.Rounded.ArrowBack) { onBack() }
+                Spacer(Modifier.weight(1f))
+                if (p.editable) Box {
+                    IconBtn(Icons.Rounded.MoreVert) { menu = true }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
+                        DropdownMenuItem(text = { Text("Delete playlist") }, onClick = { menu = false; deleting = true })
+                    }
+                }
+            }
+        }
+        item {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                PlCover(p.songs, 180.dp, 28.dp)
+                Text(p.name, Modifier.padding(top = 16.dp), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${p.songs.size} songs", color = Color.White.copy(0.65f), fontSize = 14.sp)
+                Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.clip(CircleShape).background(Color.White).tap(true) { if (p.songs.isNotEmpty()) Audio.play(p.songs, 0) }.padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(20.dp)); Text("Play", Modifier.padding(start = 4.dp), color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                    Row(Modifier.glassPanel(CircleShape).tap(true) { if (p.songs.isNotEmpty()) Audio.play(p.songs.shuffled(), 0) }.padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Shuffle, null, tint = Color.White, modifier = Modifier.size(20.dp)); Text("Shuffle", Modifier.padding(start = 4.dp), color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        if (p.songs.isEmpty()) item { Text(if (p.editable) "This playlist is empty. Use the playlist button on any song to add it." else "Nothing here yet.", Modifier.padding(24.dp), color = Color.White.copy(0.65f)) }
+        itemsIndexed(p.songs) { idx, sg ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp).glassPanel(RoundedCornerShape(20.dp)).tap { Audio.play(p.songs, idx) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Art(sg, Modifier.size(48.dp), RoundedCornerShape(14.dp))
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(sg.title, color = if (Audio.current?.id == sg.id) Color(0xFFFFB199) else Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(sg.artist, color = Color.White.copy(0.6f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (p.editable) {
+                    if (idx > 0) IconBtn(Icons.Rounded.ArrowUpward, tint = Color.White.copy(0.8f)) { Audio.moveInPlaylist(p.id, idx, idx - 1) }
+                    if (idx < p.songs.lastIndex) IconBtn(Icons.Rounded.ArrowDownward, tint = Color.White.copy(0.8f)) { Audio.moveInPlaylist(p.id, idx, idx + 1) }
+                    IconBtn(Icons.Rounded.RemoveCircleOutline, tint = Color.White.copy(0.8f)) { Audio.removeFromPlaylist(p.id, sg.id) }
+                }
+            }
+        }
+    }
+    if (renaming) NamePlaylistDialog("Rename playlist", p.name, { renaming = false }) { n -> Audio.renamePlaylist(p.id, n); renaming = false }
+    if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("Delete \"${p.name}\"?") },
+        text = { Text("The songs stay on your phone.") },
+        confirmButton = { TextButton(onClick = { Audio.deletePlaylist(p.id); deleting = false }) { Text("Delete") } },
+        dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel") } })
 }
 
 // ---------- Opening animation ----------
@@ -1285,7 +1481,7 @@ const val FLYER_ASPECT = 0.7521f
                 Box(Modifier.size(w.coerceAtLeast(0.dp), 32.dp).clip(RoundedCornerShape(16.dp)).background(pill), Alignment.Center) {
                     Icon(icon, null, tint = if (on) Color.White else Grey, modifier = Modifier.size(24.dp))
                 }
-                Text(label, color = if (on) Color.White else Grey, fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
+                if (Audio.showLabels) Text(label, color = if (on) Color.White else Grey, fontSize = 11.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal)
             }
         }
     }
@@ -1342,7 +1538,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
 }
 
 // ---------- Profile & Settings ----------
-@Composable fun ProfileScreen(songCount: Int, onSettings: () -> Unit, onClose: () -> Unit) {
+@Composable fun ProfileScreen(songCount: Int, onSettings: () -> Unit, onPlaylists: () -> Unit, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     var name by remember { mutableStateOf(Audio.userName) }
     Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),
@@ -1368,6 +1564,11 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
                 }
             }
         }
+        Row(Modifier.fillMaxWidth().padding(top = 16.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onPlaylists() }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.QueueMusic, null, tint = Green)
+            Text("Playlists", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Icon(Icons.Rounded.ChevronRight, null, tint = Grey)
+        }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onSettings() }.padding(18.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Settings, null, tint = Green)
@@ -1379,6 +1580,14 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
 
 @Composable fun SettingsScreen(onRescan: () -> Unit, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
+    val ctx = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            val vid = ctx.contentResolver.getType(uri)?.startsWith("video") == true
+            Audio.chooseBackground(if (vid) 2 else 1, uri.toString())
+        }
+    }
     val styles = listOf("Classic" to "Icons with labels and a pill highlight",
         "Fluid" to "Bubbles that stretch into a pill, on a frosted dock",
         "Capsule" to "Hold and swipe left or right on a glowing capsule",
@@ -1392,6 +1601,19 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         Row(Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onRescan() }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Refresh, null, tint = Green)
             Text("Rescan music files", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        }
+        Text("Background", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(TileBg).padding(16.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OptionChip("Theme", Audio.bgType == 0) { Audio.chooseBackground(0, "") }
+                OptionChip(if (Audio.bgType == 0) "Choose picture or video" else "Change picture or video", Audio.bgType != 0) { picker.launch(arrayOf("image/*", "video/*")) }
+            }
+            if (Audio.bgType != 0) {
+                Text(if (Audio.bgType == 2) "Using your video (muted, loops)" else "Using your picture", Modifier.padding(top = 12.dp), color = Grey, fontSize = 13.sp)
+                Text("Darken", Modifier.padding(top = 8.dp), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Slider(value = Audio.bgDim, onValueChange = { Audio.saveDim(it) }, valueRange = 0f..0.9f,
+                    colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(0.25f)))
+            }
         }
         Text("App UI", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles",
@@ -1424,6 +1646,10 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             }
         }
         Text("Sections bar style", Modifier.padding(top = 12.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+        Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Show section labels", Modifier.weight(1f), color = Color.White, fontSize = 16.sp)
+            Switch(checked = Audio.showLabels, onCheckedChange = { Audio.chooseLabels(it) })
+        }
         styles.forEachIndexed { i, (name, desc) ->
             val sel = Audio.navStyle == i
             val shape = RoundedCornerShape(22.dp)
@@ -1480,7 +1706,7 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             val tint by animateColorAsState(if (i == sel) Color.White else Color(0xFF6E6E6E), tween(200), label = "nt")
             Column(Modifier.weight(1f).tap { onSelect(i) }.padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 NavGlyph(i, tint, Modifier.size(30.dp))
-                Text(label, Modifier.padding(top = 6.dp), color = tint, fontSize = 12.sp, fontWeight = FontWeight.Normal)
+                if (Audio.showLabels) Text(label, Modifier.padding(top = 6.dp), color = tint, fontSize = 12.sp, fontWeight = FontWeight.Normal)
             }
         }
     }
