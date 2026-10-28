@@ -7,6 +7,12 @@ import android.media.MediaMetadataRetriever
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.speech.RecognizerIntent
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
 import android.view.TextureView
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.ui.viewinterop.AndroidView
@@ -196,7 +202,13 @@ class MainActivity : ComponentActivity() {
             notif.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }   // auto-detect new songs when app returns
-    LaunchedEffect(granted, tick) { if (granted) songs = withContext(Dispatchers.IO) { scanSongs(ctx) } }
+    LaunchedEffect(granted, tick) {
+        if (granted) {
+            val all = withContext(Dispatchers.IO) { scanSongs(ctx) }
+            songs = all.filter { it.kind == 0 }; Audio.extras = all.filter { it.kind == 1 }
+            Audio.genres = withContext(Dispatchers.IO) { scanGenres(ctx) }
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
     if (Audio.bgType != 0) UserBackground() else if (red) RedAmbient()
@@ -217,6 +229,7 @@ class MainActivity : ComponentActivity() {
                 } else when (t) {
                     0 -> when (Audio.uiStyle) {
                         1 -> HomeDiscovery(songs) { screen = 1 }
+                        4 -> HomeReco(songs) { screen = 1 }
                         2 -> HomeGlass(songs, barsH) { screen = 1 }
                         else -> Home(songs) { screen = 1 }
                     }
@@ -248,11 +261,12 @@ class MainActivity : ComponentActivity() {
         bars()
     }
     AnimatedVisibility(full && Audio.current != null, enter = slideInVertically { it }, exit = slideOutVertically { it }) { NowPlaying { full = false } }
-    AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }, { screen = 3 }) { screen = 0 } }
+    AnimatedVisibility(screen >= 1, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ProfileScreen(songs.size, { screen = 2 }, { screen = 3 }, { screen = 4 }) { screen = 0 } }
     AnimatedVisibility(screen == 2, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { SettingsScreen({ tick++ }) { screen = 1 } }
     AnimatedVisibility(screen == 3, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) {
         Box(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) { PlaylistsRoot(songs, 0.dp) { screen = 1 } }
     }
+    AnimatedVisibility(screen == 4, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { StatsScreen(songs) { screen = 1 } }
     AnimatedVisibility(showTools, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ToolsSheet { showTools = false } }
     if (splash) Splash { splash = false }
     Audio.pickSong?.let { PlaylistPicker(it) { Audio.pickSong = null } }
@@ -317,7 +331,7 @@ class MainActivity : ComponentActivity() {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             Row(Modifier.statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(TileBg).tap { onProfile() }, Alignment.Center) { Text(Audio.userName.trim().take(1).uppercase().ifEmpty { "J" }, color = Green, fontWeight = FontWeight.Bold) }
+                Box(Modifier.size(34.dp).clip(CircleShape).background(TileBg).tap { onProfile() }, Alignment.Center) { AvatarContent(Green, 16.sp) }
                 listOf("All", "Music", "Podcasts").forEachIndexed { i, t -> Chip(t, chip == i) { chip = i } }
             }
         }
@@ -790,6 +804,10 @@ class Playlist(val name: String, val songs: List<Song>)
     Box(Modifier.fillMaxWidth().height(70.dp).clip(edge).background(Color.Black).border(1.dp, Color.White.copy(0.08f), edge), Alignment.Center) {
         if (i == 0) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             repeat(3) { Box(Modifier.size(44.dp, 28.dp).clip(RoundedCornerShape(8.dp)).background(TileBg)) }
+        } else if (i == 4) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(34.dp, 50.dp).clip(RoundedCornerShape(17.dp)).background(Brush.verticalGradient(listOf(Color(0xFFFFC08A), Color(0xFFD7261E), Color(0xFF140605)))))
+            Box(Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF2A98C)))
+            Box(Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1C1C1E)))
         } else if (i == 3) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF3A0204), Color(0xFFD00010)))), Alignment.Center) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { repeat(3) { Box(Modifier.size(34.dp, 44.dp).glassPanel(RoundedCornerShape(10.dp))) } }
         } else if (i == 2) Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1115,7 +1133,7 @@ fun readInfo(ctx: Context, s: Song): TrackInfo = try {
                 }
                 Spacer(Modifier.weight(1f))
                 Box(Modifier.size(52.dp).glassPanel(CircleShape).tap { onProfile() }, Alignment.Center) {
-                    Text(Audio.userName.trim().take(1).uppercase().ifEmpty { "J" }, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    AvatarContent(Color.White, 20.sp)
                 }
             }
         }
@@ -1393,6 +1411,241 @@ fun resolvePlaylists(songs: List<Song>): List<PlView> {
         dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel") } })
 }
 
+// ---------- Profile picture, shapes ----------
+@Composable fun AvatarContent(textColor: Color, textSize: TextUnit) {
+    if (Audio.avatarUri.isNotBlank()) AsyncImage(model = Uri.parse(Audio.avatarUri), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+    else Text(Audio.userName.trim().take(1).uppercase().ifEmpty { "J" }, color = textColor, fontSize = textSize, fontWeight = FontWeight.Bold)
+}
+
+/** A square with a soft waist (the organic cut-outs in the recommendation tiles). */
+class WaistShape(private val waistFrac: Float) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val w = size.width; val h = size.height; val r = w * 0.22f; val k = w * waistFrac
+        val p = Path()
+        p.moveTo(r, 0f); p.lineTo(w - r, 0f); p.quadraticBezierTo(w, 0f, w, r)
+        p.cubicTo(w, h * 0.30f, w - k, h * 0.42f, w - k, h * 0.5f)
+        p.cubicTo(w - k, h * 0.58f, w, h * 0.70f, w, h - r)
+        p.quadraticBezierTo(w, h, w - r, h); p.lineTo(r, h); p.quadraticBezierTo(0f, h, 0f, h - r)
+        p.cubicTo(0f, h * 0.70f, k, h * 0.58f, k, h * 0.5f)
+        p.cubicTo(k, h * 0.42f, 0f, h * 0.30f, 0f, r)
+        p.quadraticBezierTo(0f, 0f, r, 0f); p.close()
+        return Outline.Generic(p)
+    }
+}
+
+/** Round top, soft flat bottom. */
+class ArchShape : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val w = size.width; val h = size.height; val br = w * 0.2f
+        val p = Path(); p.moveTo(0f, w / 2f); p.arcTo(Rect(0f, 0f, w, w), 180f, 180f, false)
+        p.lineTo(w, h - br); p.quadraticBezierTo(w, h, w - br, h); p.lineTo(br, h); p.quadraticBezierTo(0f, h, 0f, h - br); p.close()
+        return Outline.Generic(p)
+    }
+}
+
+// ---------- "Recommend" UI ----------
+class RecoItem(val kind: Int, val title: String, val subtitle: String, val songs: List<Song>)
+
+/** Builds the tiles: genre capsule, organic square, mosaic of your most played, rounded art, waist tile, arch. */
+fun buildRecos(pool: List<Song>, seed: Int, genres: Map<String, List<Long>>): List<RecoItem> {
+    if (pool.isEmpty()) return emptyList()
+    val rnd = Random(seed)
+    val byId = pool.associateBy { it.id }
+    fun mix(n: Int = 30) = pool.shuffled(rnd).take(n)
+    fun byGenre(vararg keys: String): Pair<String, List<Song>>? =
+        genres.entries.firstOrNull { e -> keys.any { e.key.contains(it, true) } }
+            ?.let { e -> e.key to e.value.mapNotNull { byId[it] } }?.takeIf { it.second.isNotEmpty() }
+    val top = pool.filter { (Audio.plays[it.id] ?: 0) > 0 }.sortedByDescending { Audio.plays[it.id] ?: 0 }
+    val out = mutableListOf<RecoItem>()
+    val e = byGenre("electr", "dance", "house", "techno", "edm")
+    val topGenre = genres.entries.filter { en -> en.value.any { it in byId } }.maxByOrNull { it.value.size }
+    out += RecoItem(0, (e?.first ?: topGenre?.key ?: "Mix").take(14), "", (e?.second ?: topGenre?.value?.mapNotNull { byId[it] } ?: mix()).shuffled(rnd).take(40))
+    val jazz = byGenre("jazz", "chill", "ambient", "lofi", "lo-fi")
+    out += RecoItem(1, "Chill: background ${jazz?.first?.lowercase() ?: "mix"}", "Recently updated", (jazz?.second ?: pool.take(30)).take(40))
+    out += RecoItem(2, "Good morning", "Often listen to it", (top + mix()).distinctBy { it.id }.take(40))
+    out += RecoItem(3, "Fresh picks", "Recently added", pool.take(30))
+    out += RecoItem(4, "Late night", "Calm and slow", mix())
+    out += RecoItem(5, "On a long journey", "", mix(40))
+    for (round in 1..3) for (k in 0..5) out += RecoItem(k, "Mix ${round * 6 + k - 5}", "Made for you", mix())
+    return out
+}
+
+@Composable fun MosaicCover(songs: List<Song>, modifier: Modifier, corner: Dp) {
+    Box(modifier.clip(RoundedCornerShape(corner)).background(Color(0xFF1C1C1E))) {
+        val arts = songs.distinctBy { it.albumId }
+        if (arts.size < 4) arts.firstOrNull()?.let { AsyncImage(model = it.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        else Column(Modifier.fillMaxSize()) {
+            for (rr in 0..1) Row(Modifier.weight(1f)) {
+                for (cc in 0..1) AsyncImage(model = arts[rr * 2 + cc].art, contentDescription = null, modifier = Modifier.weight(1f).fillMaxHeight(), contentScale = ContentScale.Crop)
+            }
+        }
+    }
+}
+
+@Composable fun RecoTile(it: RecoItem, onClick: () -> Unit) {
+    val art = it.songs.firstOrNull()
+    Column(Modifier.tap { onClick() }) {
+        when (it.kind) {
+            0 -> Box(Modifier.fillMaxWidth().aspectRatio(0.675f).clip(RoundedCornerShape(50)).background(Brush.verticalGradient(
+                0f to Color(0xFFFFC08A), 0.35f to Color(0xFFF26A4B), 0.55f to Color(0xFFD7261E), 0.8f to Color(0xFF4A0D08), 1f to Color(0xFF140605))), Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) {
+                    for (n in 0 until 30) drawRect(Color.Black.copy(alpha = 0.07f * (n % 3)), Offset(size.width * n / 30f, 0f), Size(size.width / 60f, size.height))
+                }
+                Text(it.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            }
+            1 -> Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(22.dp)).background(Color(0xFFF2A98C)).padding(6.dp)) {
+                if (art != null) AsyncImage(model = art.art, contentDescription = null, modifier = Modifier.fillMaxSize().clip(WaistShape(0.07f)), contentScale = ContentScale.Crop)
+            }
+            2 -> MosaicCover(it.songs, Modifier.fillMaxWidth().aspectRatio(1f), 22.dp)
+            3 -> Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(22.dp)).background(Color(0xFF1C1C1E))) {
+                if (art != null) AsyncImage(model = art.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            }
+            4 -> Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(22.dp)).background(Color(0xFF12301F)).padding(8.dp)) {
+                if (art != null) AsyncImage(model = art.art, contentDescription = null, modifier = Modifier.fillMaxSize().clip(WaistShape(0.16f)), contentScale = ContentScale.Crop)
+            }
+            else -> Box(Modifier.fillMaxWidth().aspectRatio(0.675f).clip(ArchShape()).background(Brush.verticalGradient(
+                0f to Color(0xFFB4B2C8), 0.55f to Color(0xFFC9A98F), 1f to Color(0xFFD9791E))), Alignment.BottomCenter) {
+                Text(it.title, Modifier.padding(horizontal = 8.dp, vertical = 14.dp), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium, lineHeight = 22.sp, textAlign = TextAlign.Center)
+            }
+        }
+        if (it.kind in 1..4) {
+            Text(it.title, Modifier.padding(top = 8.dp), color = Color(0xFFF1F1F3), fontSize = 16.sp, lineHeight = 20.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (it.subtitle.isNotBlank()) Text(it.subtitle, color = Color(0xFF8E8E93), fontSize = 13.sp, maxLines = 1)
+        }
+    }
+}
+
+@Composable fun HomeReco(songs: List<Song>, onProfile: () -> Unit) {
+    val ctx = LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var cat by remember { mutableIntStateOf(0) }       // 0 music, 1 books and podcasts, 2 kids
+    var seed by remember { mutableIntStateOf(1) }
+    val spin by animateFloatAsState(seed * 360f, tween(600), label = "spin")
+    val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        res.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { query = it }
+    }
+    val kidsIds = Audio.playlists.firstOrNull { it.name.equals("Kids", true) }?.songIds ?: emptyList()
+    val pool = when (cat) { 1 -> Audio.extras; 2 -> songs.filter { it.id in kidsIds }; else -> songs }
+    val genres = Audio.genres
+    val recos = remember(pool, seed, genres) { buildRecos(pool, seed, genres) }
+    val rows = recos.chunked(3)
+    val results = remember(query, songs, Audio.extras) { if (query.isBlank()) emptyList() else (songs + Audio.extras).filter { it.title.contains(query, true) || it.artist.contains(query, true) } }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 28.dp).padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFE8A33D)).tap { onProfile() }, Alignment.Center) { AvatarContent(Color.Black, 18.sp) }
+                Spacer(Modifier.width(14.dp))
+                Row(Modifier.weight(1f).height(44.dp).clip(CircleShape).background(Color(0xFF2A2A2E)).padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.Search, null, tint = Color(0xFF9A9AA0), modifier = Modifier.size(22.dp))
+                    BasicTextField(value = query, onValueChange = { query = it }, singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 17.sp), cursorBrush = SolidColor(Color.White),
+                        modifier = Modifier.weight(1f).padding(start = 10.dp),
+                        decorationBox = { inner -> Box(contentAlignment = Alignment.CenterStart) { if (query.isEmpty()) Text("Search", color = Color(0xFF9A9AA0), fontSize = 17.sp); inner() } })
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(Color.Black).tap(true) {
+                        try { voice.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)) }
+                        catch (_: Exception) { Toast.makeText(ctx, "Voice search isn't available on this phone", Toast.LENGTH_SHORT).show() }
+                    }, Alignment.Center) { Icon(Icons.Rounded.GraphicEq, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp).padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("Music" to 193f, "Books and podcasts" to 337f, "Kids" to 193f).forEachIndexed { i, (label, wt) ->
+                    val on = cat == i
+                    Box(Modifier.weight(wt).height(38.dp).clip(CircleShape).background(if (on) Color(0xFFECEFF1) else Color(0xFF1C1C1E)).tap { cat = i }, Alignment.Center) {
+                        Text(label, color = if (on) Color.Black else Color(0xFFB0B0B5), fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
+                    }
+                }
+            }
+        }
+        if (query.isNotBlank()) {
+            item { Text("Results", Modifier.padding(start = 28.dp, top = 26.dp, bottom = 6.dp), color = Color(0xFFF1F1F3), fontSize = 23.sp) }
+            if (results.isEmpty()) item { Text("No songs match your search.", Modifier.padding(28.dp), color = Grey) }
+            items(results, key = { it.id }) { sg -> SongRow(sg, results) }
+        } else {
+            item {
+                Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, top = 34.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Recommended for listening", Modifier.weight(1f), color = Color(0xFFF1F1F3), fontSize = 23.sp, lineHeight = 28.sp)
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(Color(0xFF1C1C1E)).tap(true) { seed++ }, Alignment.Center) {
+                        Icon(Icons.Rounded.Sync, null, tint = Color.White, modifier = Modifier.size(20.dp).graphicsLayer { rotationZ = spin })
+                    }
+                }
+            }
+            if (pool.isEmpty()) item {
+                Column(Modifier.padding(28.dp)) {
+                    Text(when (cat) { 1 -> "No audiobooks or podcasts found on this phone."; 2 -> "Add songs to a playlist named Kids and they will show up here."; else -> "Grant storage permission and add music files to your phone" }, color = Grey)
+                    if (cat == 2 && Audio.playlists.none { it.name.equals("Kids", true) }) Box(Modifier.padding(top = 14.dp).clip(CircleShape).background(Color(0xFFECEFF1)).tap(true) { Audio.createPlaylist("Kids") }.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                        Text("Create Kids playlist", color = Color.Black, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+            items(rows.size) { ri ->
+                Row(Modifier.fillMaxWidth().padding(horizontal = 28.dp).padding(top = if (ri == 0) 22.dp else 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                    rows[ri].forEach { r -> Box(Modifier.weight(1f)) { RecoTile(r) { if (r.songs.isNotEmpty()) Audio.play(r.songs, 0) } } }
+                    repeat(3 - rows[ri].size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+    }
+}
+
+// ---------- Stats ----------
+fun fmtListen(sec: Long) = if (sec >= 3600) "${sec / 3600}h ${(sec % 3600) / 60}m" else "${sec / 60}m"
+fun agoText(t: Long?, now: Long): String {
+    if (t == null) return "never"
+    val d = (now - t) / 1000
+    return when { d < 60 -> "just now"; d < 3600 -> "${d / 60} min ago"; d < 86400 -> "${d / 3600} h ago"; else -> "${d / 86400} d ago" }
+}
+
+@Composable fun StatsScreen(songs: List<Song>, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val plays = Audio.plays; val listen = Audio.listen; val last = Audio.lastPlayed
+    val byId = (songs + Audio.extras).associateBy { it.id }
+    val ranked = plays.entries.sortedByDescending { it.value }.mapNotNull { e -> byId[e.key]?.let { it to e.value } }.take(100)
+    val maxP = (ranked.firstOrNull()?.second ?: 1).coerceAtLeast(1)
+    val now = System.currentTimeMillis()
+    LazyColumn(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBtn(Icons.Rounded.ArrowBack) { onClose() }
+                Text("Your stats", Modifier.weight(1f), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                Spacer(Modifier.size(42.dp))
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("${plays.values.sum()}" to "Plays", fmtListen(listen.values.sum()) to "Listened", "${plays.size}" to "Songs played").forEach { (n, l) ->
+                    Column(Modifier.weight(1f).clip(RoundedCornerShape(22.dp)).background(TileBg).padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(n, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                        Text(l, color = Grey, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+        item { Text("How often you play each song", Modifier.padding(start = 20.dp, top = 20.dp, bottom = 8.dp), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        if (ranked.isEmpty()) item { Text("Play some songs and your stats will appear here.", Modifier.padding(20.dp), color = Grey) }
+        itemsIndexed(ranked) { i, pr ->
+            val sg = pr.first; val n = pr.second
+            val label = when { n >= 20 -> "On repeat"; n >= 10 -> "Heavy rotation"; n >= 5 -> "Often"; n >= 2 -> "Sometimes"; else -> "Just started" }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp).clip(RoundedCornerShape(20.dp)).background(TileBg).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${i + 1}", Modifier.width(28.dp), color = Grey, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Art(sg, Modifier.size(48.dp), RoundedCornerShape(12.dp))
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(sg.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("$label · listened ${fmtListen(listen[sg.id] ?: 0L)} · last ${agoText(last[sg.id], now)}", color = Grey, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(5.dp).clip(CircleShape).background(Color.White.copy(0.12f))) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(n.toFloat() / maxP).clip(CircleShape).background(Green))
+                    }
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("$n", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(if (n == 1) "play" else "plays", color = Grey, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
 // ---------- Opening animation ----------
 const val FLYER_ASPECT = 0.7521f
 
@@ -1538,9 +1791,16 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
 }
 
 // ---------- Profile & Settings ----------
-@Composable fun ProfileScreen(songCount: Int, onSettings: () -> Unit, onPlaylists: () -> Unit, onClose: () -> Unit) {
+@Composable fun ProfileScreen(songCount: Int, onSettings: () -> Unit, onPlaylists: () -> Unit, onStats: () -> Unit, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
     var name by remember { mutableStateOf(Audio.userName) }
+    val ctx = LocalContext.current
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            Audio.chooseAvatar(uri.toString())
+        }
+    }
     Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1549,8 +1809,9 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
             Spacer(Modifier.size(42.dp))
         }
         Spacer(Modifier.height(20.dp))
-        Box(Modifier.size(110.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, GreenDark))), Alignment.Center) {
-            Text(name.trim().take(1).uppercase().ifEmpty { "J" }, color = Color.Black, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold)
+        Box(Modifier.size(110.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Green, GreenDark))).tap { avatarPicker.launch(arrayOf("image/*")) }, Alignment.Center) {
+            AvatarContent(Color.Black, 48.sp)
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(28.dp).background(Color.Black.copy(0.4f)), Alignment.Center) { Icon(Icons.Rounded.CameraAlt, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
         }
         TextField(name, { name = it.take(20); Audio.saveName(name) }, Modifier.padding(top = 12.dp), singleLine = true,
             textStyle = TextStyle(color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center),
@@ -1563,6 +1824,11 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
                     Text(l, color = Grey, fontSize = 13.sp)
                 }
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 16.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onStats() }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.BarChart, null, tint = Green)
+            Text("Stats", Modifier.weight(1f).padding(start = 14.dp), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Icon(Icons.Rounded.ChevronRight, null, tint = Grey)
         }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp).clip(RoundedCornerShape(22.dp)).background(TileBg).tap { onPlaylists() }.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.QueueMusic, null, tint = Green)
@@ -1618,7 +1884,8 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         Text("App UI", Modifier.padding(top = 18.dp, bottom = 8.dp), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
         listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles",
             "Glass" to "Frosted glass, glowing orbs and translucent bars",
-            "Ember" to "Red glow, glass cards, smart mix and listening tools").forEachIndexed { i, (name, desc) ->
+            "Ember" to "Red glow, glass cards, smart mix and listening tools",
+            "Recommend" to "Search, category chips and shaped recommendation tiles").forEachIndexed { i, (name, desc) ->
             val sel = Audio.uiStyle == i
             val shape = RoundedCornerShape(22.dp)
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).background(TileBg)

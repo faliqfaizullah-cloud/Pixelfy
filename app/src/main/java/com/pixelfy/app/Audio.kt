@@ -24,7 +24,7 @@ import androidx.media3.exoplayer.ExoPlayer
 
 data class UserPlaylist(val id: Long, val name: String, val songIds: List<Long>)
 
-data class Song(val id: Long, val title: String, val artist: String, val albumId: Long, val uri: Uri) {
+data class Song(val id: Long, val title: String, val artist: String, val albumId: Long, val uri: Uri, val kind: Int = 0) {
     val art: Uri get() = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
     fun toItem(): MediaItem = MediaItem.Builder().setMediaId(id.toString()).setUri(uri)
         .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).setArtworkUri(uri).build()).build()
@@ -33,15 +33,34 @@ data class Song(val id: Long, val title: String, val artist: String, val albumId
 /** Automatically detects every music file on the device via MediaStore. */
 fun scanSongs(ctx: Context): List<Song> {
     val out = mutableListOf<Song>()
-    val proj = arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM_ID)
-    ctx.contentResolver.query(M.EXTERNAL_CONTENT_URI, proj,
-        "${M.IS_MUSIC}!=0 AND ${M.DURATION}>30000", null, "${M.DATE_ADDED} DESC")?.use { c ->
+    val flags = if (android.os.Build.VERSION.SDK_INT >= 29) "${M.IS_MUSIC}!=0 OR ${M.IS_PODCAST}!=0 OR ${M.IS_AUDIOBOOK}!=0" else "${M.IS_MUSIC}!=0 OR ${M.IS_PODCAST}!=0"
+    val proj = arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM_ID, M.IS_MUSIC)
+    ctx.contentResolver.query(M.EXTERNAL_CONTENT_URI, proj, "($flags) AND ${M.DURATION}>30000", null, "${M.DATE_ADDED} DESC")?.use { c ->
         while (c.moveToNext()) {
             val id = c.getLong(0)
             out += Song(id, c.getString(1) ?: "Unknown", c.getString(2)?.takeIf { it != "<unknown>" } ?: "Unknown artist",
-                c.getLong(3), ContentUris.withAppendedId(M.EXTERNAL_CONTENT_URI, id))
+                c.getLong(3), ContentUris.withAppendedId(M.EXTERNAL_CONTENT_URI, id), if (c.getInt(4) != 0) 0 else 1)
         }
     }
+    return out
+}
+
+/** Genre name -> ids of the songs in it (used for genre mixes). */
+fun scanGenres(ctx: Context): Map<String, List<Long>> {
+    val out = mutableMapOf<String, List<Long>>()
+    try {
+        ctx.contentResolver.query(MediaStore.Audio.Genres.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Audio.Genres._ID, MediaStore.Audio.Genres.NAME), null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val gid = c.getLong(0); val name = c.getString(1)?.trim().orEmpty()
+                if (name.isBlank()) continue
+                val ids = mutableListOf<Long>()
+                ctx.contentResolver.query(MediaStore.Audio.Genres.Members.getContentUri("external", gid), arrayOf(MediaStore.Audio.Genres.Members.AUDIO_ID), null, null, null)?.use { m ->
+                    while (m.moveToNext()) ids += m.getLong(0)
+                }
+                if (ids.isNotEmpty()) out[name] = ids
+            }
+        }
+    } catch (_: Exception) {}
     return out
 }
 
@@ -64,6 +83,7 @@ object Audio {
     fun init(c: Context) {
         if (::exo.isInitialized) return
         ctx = c.applicationContext
+        startStatsTicker()
         liked = ctx.getSharedPreferences("pixelfy", 0).getStringSet("liked", emptySet())!!.map { it.toLong() }.toSet()
         theme = ctx.getSharedPreferences("pixelfy", 0).getInt("theme", 0)
         navStyle = ctx.getSharedPreferences("pixelfy", 0).getInt("navStyle4", 3)
@@ -75,6 +95,9 @@ object Audio {
         bgUri = ctx.getSharedPreferences("pixelfy", 0).getString("bgUri", "") ?: ""
         bgDim = ctx.getSharedPreferences("pixelfy", 0).getFloat("bgDim", 0.45f)
         showLabels = ctx.getSharedPreferences("pixelfy", 0).getBoolean("labels", false)
+        listen = parseLongs(ctx.getSharedPreferences("pixelfy", 0).getString("listen", "") ?: "")
+        lastPlayed = parseLongs(ctx.getSharedPreferences("pixelfy", 0).getString("last", "") ?: "")
+        avatarUri = ctx.getSharedPreferences("pixelfy", 0).getString("avatar", "") ?: ""
         plays = parsePlays(ctx.getSharedPreferences("pixelfy", 0).getString("plays", "") ?: "")
         exo = ExoPlayer.Builder(ctx)
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
@@ -104,7 +127,7 @@ object Audio {
     fun toggle() { if (exo.isPlaying) exo.pause() else exo.play() }
     fun seekTo(ms: Long) = exo.seekTo(ms)
     fun chooseNavStyle(i: Int) { navStyle = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("navStyle4", i).apply() }
-    fun chooseUiStyle(i: Int) { uiStyle = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("uiStyle", i).apply(); if (i == 1) chooseNavStyle(3) }
+    fun chooseUiStyle(i: Int) { uiStyle = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("uiStyle", i).apply(); if (i == 1 || i == 4) chooseNavStyle(3) }
     fun chooseAccent(i: Int) { accent = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("accent", i).apply() }
     // ---------------- extra music features ----------------
     var plays by mutableStateOf(mapOf<Long, Int>())          // how many times each song was played
@@ -122,6 +145,7 @@ object Audio {
     private fun bump(id: Long) {
         plays = plays + (id to ((plays[id] ?: 0) + 1))
         ctx.getSharedPreferences("pixelfy", 0).edit().putString("plays", plays.entries.joinToString(",") { "${it.key}:${it.value}" }).apply()
+        lastPlayed = lastPlayed + (id to System.currentTimeMillis()); saveStats()
     }
 
     fun sleepIn(min: Int) {
@@ -206,6 +230,31 @@ object Audio {
     fun chooseBackground(type: Int, uri: String) { bgType = type; bgUri = uri; prefs().edit().putInt("bgType", type).putString("bgUri", uri).apply() }
     fun saveDim(v: Float) { bgDim = v; prefs().edit().putFloat("bgDim", v).apply() }
     fun chooseLabels(on: Boolean) { showLabels = on; prefs().edit().putBoolean("labels", on).apply() }
+    // ---------------- stats, avatar, extra libraries ----------------
+    var listen by mutableStateOf(mapOf<Long, Long>())            // seconds actually listened, per song
+    var lastPlayed by mutableStateOf(mapOf<Long, Long>())        // when each song was last started (epoch ms)
+    var extras by mutableStateOf(listOf<Song>())                 // podcasts and audiobooks
+    var genres by mutableStateOf(mapOf<String, List<Long>>())
+    var avatarUri by mutableStateOf("")
+    private var dirty = false
+    private var statTick = 0
+    private fun parseLongs(s: String): Map<Long, Long> = s.split(',').mapNotNull { p ->
+        p.split(':').takeIf { it.size == 2 }?.let { (x, y) -> x.toLongOrNull()?.let { id -> y.toLongOrNull()?.let { id to it } } }
+    }.toMap()
+    private fun encode(m: Map<Long, Long>) = m.entries.joinToString(",") { "${it.key}:${it.value}" }
+    private fun saveStats() { prefs().edit().putString("listen", encode(listen)).putString("last", encode(lastPlayed)).apply(); dirty = false }
+    private fun startStatsTicker() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                if (exo.isPlaying) {
+                    current?.let { c -> listen = listen + (c.id to ((listen[c.id] ?: 0L) + 1L)); dirty = true }
+                    statTick++; if (statTick % 15 == 0 && dirty) saveStats()
+                }
+                handler.postDelayed(this, 1000)
+            }
+        }, 1000)
+    }
+    fun chooseAvatar(u: String) { avatarUri = u; prefs().edit().putString("avatar", u).apply() }
     fun saveName(n: String) { userName = n; ctx.getSharedPreferences("pixelfy", 0).edit().putString("userName", n).apply() }
     fun chooseTheme(i: Int) { theme = i; ctx.getSharedPreferences("pixelfy", 0).edit().putInt("theme", i).apply() }
     fun toggleShuffle() { shuffle = !shuffle; exo.shuffleModeEnabled = shuffle }
