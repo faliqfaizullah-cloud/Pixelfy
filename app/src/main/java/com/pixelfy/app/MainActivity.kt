@@ -7,6 +7,7 @@ import android.media.MediaMetadataRetriever
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.composed
