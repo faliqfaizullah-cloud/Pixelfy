@@ -7,6 +7,13 @@ import android.media.MediaMetadataRetriever
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import kotlin.math.abs
 import android.speech.RecognizerIntent
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.geometry.Rect
@@ -182,7 +189,7 @@ class MainActivity : ComponentActivity() {
     val glass = Audio.uiStyle == 2
     val red = Audio.uiStyle == 3
     var showTools by remember { mutableStateOf(false) }
-    val tabIdx = if (red) tab.coerceAtMost(2) else if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
+    val tabIdx = if (Audio.uiStyle == 5) tab.coerceAtMost(2) else if (red) tab.coerceAtMost(2) else if (Audio.navStyle == 3 || glass) tab.coerceAtMost(2) else tab
     val crashFile = remember { File(ctx.filesDir, "crash.txt") }
     var crash by remember { mutableStateOf(if (crashFile.exists()) crashFile.readText() else null) }
     crash?.let { txt ->
@@ -210,7 +217,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(Modifier.fillMaxSize().background(if (Audio.uiStyle == 5) HypeBg else Color.Black)) {
     if (Audio.bgType != 0) UserBackground() else if (red) RedAmbient()
     val libSongs = remember(songs, sortAz) { if (sortAz) songs.sortedBy { it.title.lowercase() } else songs }
     var barsH by remember { mutableStateOf(0.dp) }
@@ -230,11 +237,12 @@ class MainActivity : ComponentActivity() {
                     0 -> when (Audio.uiStyle) {
                         1 -> HomeDiscovery(songs) { screen = 1 }
                         4 -> HomeReco(songs) { screen = 1 }
+                        5 -> HomeHype(songs, { screen = 1 }) { tab = 1 }
                         2 -> HomeGlass(songs, barsH) { screen = 1 }
                         else -> Home(songs) { screen = 1 }
                     }
-                    1 -> SearchScreen(songs)
-                    2 -> LibraryScreen(libSongs, sortAz) { sortAz = !sortAz }
+                    1 -> if (Audio.uiStyle == 5) HypeSearch(songs) else SearchScreen(songs)
+                    2 -> if (Audio.uiStyle == 5) FavAlbums(songs) { tab = 0 } else LibraryScreen(libSongs, sortAz) { sortAz = !sortAz }
                     else -> CreateScreen(songs.size) { tick++ }
                 }
             }
@@ -268,7 +276,7 @@ class MainActivity : ComponentActivity() {
     }
     AnimatedVisibility(screen == 4, enter = slideInHorizontally { it }, exit = slideOutHorizontally { it }) { StatsScreen(songs) { screen = 1 } }
     AnimatedVisibility(showTools, enter = slideInVertically { it }, exit = slideOutVertically { it }) { ToolsSheet { showTools = false } }
-    if (splash) Splash { splash = false }
+    if (splash) { if (Audio.uiStyle == 5) HypeIntro { splash = false } else Splash { splash = false } }
     Audio.pickSong?.let { PlaylistPicker(it) { Audio.pickSong = null } }
     }
 }
@@ -411,6 +419,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable fun MiniPlayer(onOpen: () -> Unit) {
     val s = Audio.current ?: return
+    if (Audio.uiStyle == 5) { MiniPlayerHype(onOpen); return }
     val view = LocalView.current
     val liked = s.id in Audio.liked
     val shape = RoundedCornerShape(50)
@@ -804,6 +813,10 @@ class Playlist(val name: String, val songs: List<Song>)
     Box(Modifier.fillMaxWidth().height(70.dp).clip(edge).background(Color.Black).border(1.dp, Color.White.copy(0.08f), edge), Alignment.Center) {
         if (i == 0) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             repeat(3) { Box(Modifier.size(44.dp, 28.dp).clip(RoundedCornerShape(8.dp)).background(TileBg)) }
+        } else if (i == 5) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(50.dp, 56.dp).clip(RoundedCornerShape(topStart = 25.dp, topEnd = 25.dp, bottomStart = 10.dp, bottomEnd = 10.dp)).background(HypeBlue))
+            Box(Modifier.size(50.dp, 56.dp).clip(RoundedCornerShape(topStart = 25.dp, topEnd = 25.dp, bottomStart = 10.dp, bottomEnd = 10.dp)).background(HypeYellow))
+            Box(Modifier.size(50.dp, 56.dp).clip(RoundedCornerShape(topStart = 25.dp, topEnd = 25.dp, bottomStart = 10.dp, bottomEnd = 10.dp)).background(HypeLilac))
         } else if (i == 4) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(34.dp, 50.dp).clip(RoundedCornerShape(17.dp)).background(Brush.verticalGradient(listOf(Color(0xFFFFC08A), Color(0xFFD7261E), Color(0xFF140605)))))
             Box(Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFF2A98C)))
@@ -1646,6 +1659,345 @@ fun agoText(t: Long?, now: Long): String {
     }
 }
 
+// ---------- "Hype" UI: navy and neon ----------
+val HypeBg = Color(0xFF242A3C); val HypeDark = Color(0xFF1B2030); val HypeYellow = Color(0xFFF7E94B); val HypeBlue = Color(0xFF1747FF)
+val HypeLime = Color(0xFFC8F560); val HypePink = Color(0xFFC964B5); val HypeLilac = Color(0xFFE0C3EA); val HypeSky = Color(0xFF9CC4FF); val HypeMauve = Color(0xFFD7A8E6)
+
+/** Slides up and fades in, one item after another. */
+fun Modifier.enter(i: Int): Modifier = composed {
+    val a = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { delay(i * 90L); a.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 200f)) }
+    graphicsLayer { alpha = a.value.coerceIn(0f, 1f); translationY = (1f - a.value) * 60f }
+}
+
+/** Lets the bottom bar tuck under the strip above it. */
+fun Modifier.overlapUp(d: Dp): Modifier = layout { m, c ->
+    val p = m.measure(c); val o = d.roundToPx()
+    layout(p.width, p.height - o) { p.place(0, -o) }
+}
+
+fun DrawScope.drawBurst(cx: Float, cy: Float, r: Float, n: Int, inner: Float, color: Color) {
+    val p = Path()
+    for (k in 0 until n * 2) {
+        val rad = if (k % 2 == 0) r else r * inner; val ang = Math.PI * k / n
+        val x = cx + rad * cos(ang).toFloat(); val y = cy + rad * sin(ang).toFloat()
+        if (k == 0) p.moveTo(x, y) else p.lineTo(x, y)
+    }
+    p.close(); drawPath(p, color)
+}
+fun DrawScope.drawStar4(cx: Float, cy: Float, r: Float, color: Color) {
+    val p = Path(); p.moveTo(cx, cy - r); p.quadraticBezierTo(cx, cy, cx + r, cy); p.quadraticBezierTo(cx, cy, cx, cy + r)
+    p.quadraticBezierTo(cx, cy, cx - r, cy); p.quadraticBezierTo(cx, cy, cx, cy - r); p.close(); drawPath(p, color)
+}
+
+@Composable fun HypeGlyph(kind: Int, color: Color, modifier: Modifier) {
+    Canvas(modifier) {
+        val w = size.width; val c = Offset(w / 2f, size.height / 2f); val sw = w * 0.1f
+        when (kind) {
+            0 -> { drawCircle(color, w * 0.46f, c, style = Stroke(sw * 0.45f)); drawCircle(color, w * 0.31f, c, style = Stroke(sw * 0.45f)); drawCircle(color, w * 0.10f, c) }
+            1 -> drawBurst(c.x, c.y, w * 0.48f, 12, 0.55f, color)
+            2 -> for (k in 0 until 3) {
+                val ang = Math.PI * k / 3; val dx = (w * 0.44f * cos(ang)).toFloat(); val dy = (w * 0.44f * sin(ang)).toFloat()
+                drawLine(color, Offset(c.x - dx, c.y - dy), Offset(c.x + dx, c.y + dy), sw, StrokeCap.Round)
+            }
+            else -> drawStar4(c.x, c.y, w * 0.46f, color)
+        }
+    }
+}
+
+class MarqueeTok(val text: String?, val color: Color, val weight: FontWeight = FontWeight.ExtraBold, val glyph: Int = -1)
+
+/** Opening animation: rows of big text scroll in alternating directions, the shapes spin, then it dissolves into the app. */
+@Composable fun HypeIntro(onDone: () -> Unit) {
+    val view = LocalView.current
+    var skip by remember { mutableStateOf(false) }
+    val exit = remember { Animatable(0f) }
+    BackHandler { skip = true }
+    LaunchedEffect(Unit) { view.buzz() }
+    LaunchedEffect(skip) {
+        if (!skip) delay(7000)
+        view.buzz(true)
+        exit.animateTo(1f, tween(if (skip) 250 else 450))
+        onDone()
+    }
+    val tm = rememberTextMeasurer()
+    val tr = rememberInfiniteTransition(label = "mq")
+    val spin by tr.animateFloat(0f, 360f, infiniteRepeatable(tween(12000, easing = LinearEasing)), label = "spin")
+    val phases = listOf(9000, 12000, 8000, 11000, 10000).mapIndexed { n, ms -> tr.animateFloat(0f, 1f, infiniteRepeatable(tween(ms, easing = LinearEasing)), label = "p$n") }
+    val rows = remember {
+        listOf(
+            listOf(MarqueeTok("HEY!", HypeMauve), MarqueeTok("•", HypeMauve), MarqueeTok("HEY!", HypeMauve, FontWeight.Light), MarqueeTok("•", HypeMauve)),
+            listOf(MarqueeTok("WE HAVE", HypeSky), MarqueeTok("•", HypeSky)),
+            listOf(MarqueeTok("SOME COOL", HypeYellow, FontWeight.Normal), MarqueeTok("•", HypeYellow, FontWeight.Normal)),
+            listOf(MarqueeTok("MUSIC", HypeLime), MarqueeTok(null, Color.White, glyph = 3), MarqueeTok(null, HypeSky, glyph = 3)),
+            listOf(MarqueeTok("FOR", HypeLime, FontWeight.Normal), MarqueeTok("YOU", HypePink, FontWeight.Normal), MarqueeTok(null, HypeYellow, glyph = 1)))
+    }
+    val measured = rows.map { row -> remember(row) { row.map { t -> t.text?.let { tm.measure(it, TextStyle(color = t.color, fontSize = 52.sp, fontWeight = t.weight)) } } } }
+    Box(Modifier.fillMaxSize().background(HypeBg).graphicsLayer { val e = exit.value; alpha = 1f - e; scaleX = 1f + 0.1f * e; scaleY = 1f + 0.1f * e }
+        .pointerInput(Unit) { detectTapGestures { skip = true } }) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(top = 28.dp, bottom = 28.dp)) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                listOf(2 to HypePink, 0 to Color.White, 1 to HypeLime, 2 to HypeSky).forEach { (k, c) -> HypeGlyph(k, c, Modifier.size(52.dp).graphicsLayer { rotationZ = if (k == 0) 0f else spin }) }
+            }
+            rows.forEachIndexed { ri, row ->
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF3A4156)))
+                Canvas(Modifier.fillMaxWidth().height(96.dp).enter(ri)) {
+                    val gap = 28.dp.toPx(); val glyph = 44.dp.toPx()
+                    val widths = measured[ri].map { it?.size?.width?.toFloat() ?: glyph }
+                    val period = widths.sum() + gap * widths.size
+                    val off = phases[ri].value * period
+                    var x = if (ri % 2 == 0) -off else off - period
+                    while (x < size.width) {
+                        row.forEachIndexed { ti, tok ->
+                            val lay = measured[ri][ti]
+                            if (lay != null) drawText(lay, topLeft = Offset(x, (size.height - lay.size.height) / 2f))
+                            else if (tok.glyph == 3) drawStar4(x + glyph / 2f, size.height / 2f, glyph / 2f, tok.color)
+                            else drawBurst(x + glyph / 2f, size.height / 2f, glyph / 2f, 12, 0.55f, tok.color)
+                            x += widths[ti] + gap
+                        }
+                    }
+                }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF3A4156)))
+            Spacer(Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).height(68.dp).clip(CircleShape).background(HypeBlue).tap(true) { skip = true }.padding(horizontal = 32.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("GET HYPED", Modifier.weight(1f), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                Icon(Icons.Rounded.ArrowForward, null, tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+        }
+    }
+}
+
+class MixDef(val name: String, val sub: String, val songs: List<Song>)
+class MixPal(val bg: Color, val fg: Color, val glyph: Int, val glyphColor: Color)
+
+fun buildMixes(songs: List<Song>, genres: Map<String, List<Long>>): List<MixDef> {
+    val byId = songs.associateBy { it.id }
+    val out = mutableListOf<MixDef>()
+    fun who(l: List<Song>): String { val a = l.map { it.artist }.distinct(); return a.take(3).joinToString(", ") + if (a.size > 3) " and more" else "" }
+    genres.entries.map { e -> e.key to e.value.mapNotNull { byId[it] } }.filter { it.second.size >= 2 }.sortedByDescending { it.second.size }.take(6)
+        .forEach { (g, l) -> out += MixDef(g.take(16), who(l), l.shuffled()) }
+    val topP = songs.filter { (Audio.plays[it.id] ?: 0) > 0 }.sortedByDescending { Audio.plays[it.id] ?: 0 }
+    if (topP.isNotEmpty()) out += MixDef("Most played", who(topP), topP)
+    val lk = songs.filter { it.id in Audio.liked }
+    if (lk.isNotEmpty()) out += MixDef("Liked songs", who(lk), lk)
+    if (out.isEmpty() && songs.isNotEmpty()) out += MixDef("Shuffle all", "Everything on your phone", songs.shuffled())
+    return out
+}
+
+@Composable fun HypeMix(m: MixDef, idx: Int, onClick: () -> Unit) {
+    val pals = remember {
+        listOf(MixPal(HypeBlue, Color.White, 0, Color.White), MixPal(HypeYellow, HypeDark, 1, Color.Black), MixPal(HypeLilac, HypeDark, 2, HypePink),
+            MixPal(HypeLime, HypeDark, 3, HypeDark), MixPal(HypePink, Color.White, 2, Color.White))
+    }
+    val p = pals[idx % pals.size]
+    val spin by rememberInfiniteTransition(label = "mix").animateFloat(0f, 360f, infiniteRepeatable(tween(14000, easing = LinearEasing)), label = "ms")
+    Column(Modifier.width(140.dp).height(190.dp).clip(RoundedCornerShape(topStart = 70.dp, topEnd = 70.dp, bottomStart = 24.dp, bottomEnd = 24.dp))
+        .background(p.bg).tap { onClick() }.padding(horizontal = 16.dp, vertical = 26.dp)) {
+        HypeGlyph(p.glyph, p.glyphColor, Modifier.size(34.dp).graphicsLayer { rotationZ = if (p.glyph == 0) 0f else spin })
+        Spacer(Modifier.height(18.dp))
+        Text(m.name, color = p.fg, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(m.sub, Modifier.padding(top = 4.dp), color = p.fg.copy(0.7f), fontSize = 12.sp, lineHeight = 16.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable fun RecCard(s: Song, idx: Int, all: List<Song>) {
+    val liked = s.id in Audio.liked
+    val plays = Audio.plays[s.id] ?: 0
+    val (tag, tagBg) = when { idx < 4 -> "NEW" to HypeLime; liked -> "LOVED" to HypeLilac; plays > 3 -> "HOT" to HypeYellow; else -> "FOR YOU" to HypeSky }
+    Column(Modifier.width(176.dp).height(226.dp).clip(RoundedCornerShape(22.dp)).background(Color.White).tap { Audio.play(all, all.indexOf(s)) }.enter(idx)) {
+        Box(Modifier.fillMaxWidth().weight(1f).background(Color(0xFFE8E8EE))) {
+            AsyncImage(model = s.art, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            Box(Modifier.align(Alignment.BottomStart).padding(10.dp).clip(RoundedCornerShape(6.dp)).background(tagBg).padding(horizontal = 8.dp, vertical = 3.dp)) {
+                Text(tag, color = HypeDark, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Box(Modifier.align(Alignment.BottomEnd).padding(10.dp).size(36.dp).clip(CircleShape).background(Color.Black)
+                .tap(true) { if (Audio.current?.id == s.id) Audio.toggle() else Audio.play(all, all.indexOf(s)) }, Alignment.Center) {
+                Icon(if (Audio.current?.id == s.id && Audio.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(s.title, color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("By ${s.artist}", color = Color(0xFF7A7F8E), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable fun HomeHype(songs: List<Song>, onProfile: () -> Unit, onSearch: () -> Unit) {
+    val genres = Audio.genres
+    val mixes = remember(songs, genres, Audio.liked.size, Audio.plays.size) { buildMixes(songs, genres) }
+    val recs = remember(songs) { songs.take(14) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 20.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp).padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(36.dp).clip(CircleShape).background(HypeDark).tap { onProfile() }, Alignment.Center) { AvatarContent(Color.White, 16.sp) }
+                Text("Home", Modifier.weight(1f), color = Color.White, fontSize = 15.sp, textAlign = TextAlign.Center)
+                Icon(Icons.Rounded.Search, null, tint = Color.White, modifier = Modifier.size(36.dp).clip(CircleShape).tap { onSearch() }.padding(7.dp))
+            }
+        }
+        item { Text("Recommended", Modifier.padding(start = 20.dp, top = 26.dp, bottom = 14.dp), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        item {
+            if (songs.isEmpty()) Text("Grant storage permission and add music files to your phone", Modifier.padding(20.dp), color = Grey)
+            else LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                itemsIndexed(recs) { n, sg -> RecCard(sg, n, songs) }
+            }
+        }
+        item { Text("Favourite Mixes", Modifier.padding(start = 20.dp, top = 30.dp, bottom = 14.dp), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        item {
+            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                itemsIndexed(mixes) { n, mx -> Box(Modifier.enter(n + 2)) { HypeMix(mx, n) { Audio.play(mx.songs, 0) } } }
+            }
+        }
+    }
+}
+
+@Composable fun HypeSearch(songs: List<Song>) {
+    var q by remember { mutableStateOf("") }
+    val res = remember(q, songs, Audio.extras) { if (q.isBlank()) songs.take(30) else (songs + Audio.extras).filter { it.title.contains(q, true) || it.artist.contains(q, true) } }
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Text("Search", Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 14.dp), color = Color.White, fontSize = 15.sp, textAlign = TextAlign.Center)
+        TextField(q, { q = it }, Modifier.fillMaxWidth().padding(horizontal = 20.dp), singleLine = true, shape = CircleShape,
+            leadingIcon = { Icon(Icons.Rounded.Search, null) }, placeholder = { Text("Songs or artists") },
+            colors = TextFieldDefaults.colors(focusedContainerColor = HypeDark, unfocusedContainerColor = HypeDark, focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, cursorColor = HypeYellow))
+        LazyColumn(Modifier.weight(1f).padding(top = 8.dp)) { items(res, key = { it.id }) { sg -> SongRow(sg, res) } }
+    }
+}
+
+class AlbumGroup(val albumId: Long, val name: String, val artist: String, val songs: List<Song>)
+
+fun buildAlbums(songs: List<Song>, mode: Int): List<AlbumGroup> {
+    val all = songs.groupBy { it.albumId }.map { (id, l) ->
+        val artists = l.map { it.artist }.distinct()
+        AlbumGroup(id, l.first().album.ifBlank { "Unknown album" }, if (artists.size == 1) artists[0] else artists.take(2).joinToString(", "), l.sortedBy { it.title.lowercase() })
+    }
+    fun score(a: AlbumGroup) = a.songs.count { it.id in Audio.liked } * 3 + a.songs.sumOf { Audio.plays[it.id] ?: 0 }
+    return when (mode) {
+        1 -> all.sortedBy { it.name.lowercase() }
+        2 -> all.filter { a -> a.songs.any { (Audio.plays[it.id] ?: 0) > 0 } }.sortedByDescending { a -> a.songs.sumOf { Audio.plays[it.id] ?: 0 } }
+        else -> all.filter { score(it) > 0 }.sortedByDescending { score(it) }
+    }
+}
+
+@Composable fun HypeTrackRow(n: Int, s: Song, album: List<Song>, idx: Int) {
+    var menu by remember { mutableStateOf(false) }
+    val cur = Audio.current?.id == s.id
+    Row(Modifier.fillMaxWidth().tap { Audio.play(album, idx) }.padding(horizontal = 26.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("$n", Modifier.width(32.dp), color = if (cur) HypeYellow else Color.White, fontSize = 14.sp)
+        Text(s.title.uppercase(), Modifier.weight(1f), color = if (cur) HypeYellow else Color(0xFFB8BDD0), fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, letterSpacing = 0.5.sp)
+        Box {
+            Icon(Icons.Rounded.MoreHoriz, null, tint = Color.White, modifier = Modifier.size(34.dp).clip(CircleShape).tap { menu = true }.padding(5.dp))
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Play next") }, onClick = { Audio.playNext(s); menu = false })
+                DropdownMenuItem(text = { Text("Add to queue") }, onClick = { Audio.addToQueue(s); menu = false })
+                DropdownMenuItem(text = { Text("Add to playlist") }, onClick = { Audio.pickSong = s; menu = false })
+                DropdownMenuItem(text = { Text(if (s.id in Audio.liked) "Remove from favourites" else "Add to favourites") }, onClick = { Audio.toggleLike(s); menu = false })
+            }
+        }
+    }
+}
+
+/** Favourite albums: a carousel of covers (swipe), the album's tracks below, a filter in the corner. */
+@Composable fun FavAlbums(songs: List<Song>, onBack: () -> Unit) {
+    var mode by remember { mutableIntStateOf(0) }
+    var menu by remember { mutableStateOf(false) }
+    val liked = Audio.liked; val plays = Audio.plays
+    val albums = remember(songs, mode, liked, plays) { buildAlbums(songs, mode) }
+    val pager = rememberPagerState(pageCount = { albums.size })
+    LaunchedEffect(mode) { if (albums.isNotEmpty()) pager.scrollToPage(0) }
+    val cur = albums.getOrNull(pager.currentPage)
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBtn(Icons.Rounded.ArrowBack) { onBack() }
+                Text("Fav Albums", Modifier.weight(1f), color = Color.White, fontSize = 15.sp, textAlign = TextAlign.Center)
+                Box {
+                    IconBtn(Icons.Rounded.FilterList) { menu = true }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        listOf("Favourites", "All albums", "Most played").forEachIndexed { n, t -> DropdownMenuItem(text = { Text(t) }, onClick = { mode = n; menu = false }) }
+                    }
+                }
+            }
+        }
+        if (albums.isEmpty()) item {
+            Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (mode == 0) "Like some songs and your favourite albums will appear here." else "Nothing here yet.", color = Grey, textAlign = TextAlign.Center)
+                if (mode == 0) Box(Modifier.padding(top = 14.dp).clip(CircleShape).background(HypeYellow).tap(true) { mode = 1 }.padding(horizontal = 22.dp, vertical = 11.dp)) {
+                    Text("Show all albums", color = HypeDark, fontWeight = FontWeight.Bold)
+                }
+            }
+        } else {
+            item {
+                HorizontalPager(state = pager, modifier = Modifier.fillMaxWidth().height(270.dp), contentPadding = PaddingValues(horizontal = 84.dp), pageSpacing = 14.dp) { page ->
+                    val a = albums[page]
+                    val off = abs((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(0f, 1f)
+                    Box(Modifier.fillMaxSize().graphicsLayer { val k = 1f - 0.14f * off; scaleX = k; scaleY = k; alpha = 1f - 0.5f * off }.padding(vertical = 12.dp)
+                        .tap(true) { Audio.play(a.songs, 0) }, Alignment.Center) {
+                        if (Build.VERSION.SDK_INT >= 31) AsyncImage(model = a.songs.first().art, contentDescription = null, contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize().padding(14.dp).graphicsLayer { alpha = 0.55f }.blur(26.dp, BlurredEdgeTreatment.Unbounded))
+                        AsyncImage(model = a.songs.first().art, contentDescription = null, contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(HypeDark))
+                    }
+                }
+            }
+            item {
+                Column(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(cur?.name ?: "", Modifier.padding(horizontal = 24.dp), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(cur?.artist ?: "", Modifier.padding(horizontal = 24.dp, vertical = 2.dp), color = Grey, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (cur != null) itemsIndexed(cur.songs) { n, sg -> HypeTrackRow(n + 1, sg, cur.songs, n) }
+        }
+    }
+}
+
+/** White strip with a lilac progress fill: round cover (tap to play or pause), title, artist and time left. */
+@Composable fun MiniPlayerHype(onOpen: () -> Unit) {
+    val s = Audio.current ?: return
+    val view = LocalView.current
+    var pos by remember { mutableLongStateOf(0L) }
+    var dur by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(s.id) { while (true) { pos = Audio.player.currentPosition; dur = Audio.player.duration.coerceAtLeast(0L); delay(500) } }
+    val frac = if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f
+    Box(Modifier.fillMaxWidth().height(62.dp).clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)).background(Color.White)
+        .pointerInput(Unit) {
+            var acc = 0f
+            detectHorizontalDragGestures(onDragStart = { acc = 0f },
+                onDragEnd = { if (acc < -90f) { Audio.next(); view.buzz(true) } else if (acc > 90f) { Audio.prev(); view.buzz(true) } }) { _, d -> acc += d }
+        }) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(frac).background(Color(0xFFD9BDE6)))
+        Row(Modifier.fillMaxSize().padding(start = 12.dp, end = 24.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(38.dp).clip(CircleShape).tap(true) { Audio.toggle() }, Alignment.Center) {
+                Art(s, Modifier.fillMaxSize(), CircleShape)
+                if (!Audio.playing) Box(Modifier.fillMaxSize().background(Color.Black.copy(0.45f)), Alignment.Center) { Icon(Icons.Rounded.PlayArrow, null, tint = Color.White, modifier = Modifier.size(22.dp)) }
+            }
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp).tap { onOpen() }) {
+                Text(s.title, color = Color.Black, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.artist, color = Color(0xFF6B7080), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(fmt((dur - pos).coerceAtLeast(0L)), color = Color.Black, fontSize = 14.sp)
+        }
+    }
+}
+
+/** Dark rounded bar with three round buttons; the active one fills yellow and bounces. */
+@Composable fun NavBarHype(sel: Int, onSelect: (Int) -> Unit) {
+    val icons = listOf(Icons.Rounded.Home, Icons.Rounded.Search, Icons.Rounded.FavoriteBorder)
+    Row(Modifier.fillMaxWidth().then(if (Audio.current != null) Modifier.overlapUp(26.dp) else Modifier)
+        .clip(RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp)).background(HypeDark).navigationBarsPadding().padding(top = 16.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        icons.forEachIndexed { n, ic ->
+            val on = n == sel
+            val bg by animateColorAsState(if (on) HypeYellow else Color.Transparent, tween(250), label = "hb")
+            val sc by animateFloatAsState(if (on) 1.1f else 1f, spring(dampingRatio = 0.4f, stiffness = 400f), label = "hs")
+            Box(Modifier.size(42.dp).graphicsLayer { scaleX = sc; scaleY = sc }.clip(CircleShape).background(bg)
+                .border(1.5.dp, if (on) Color.Transparent else Color.White.copy(0.7f), CircleShape).tap { onSelect(n) }, Alignment.Center) {
+                Icon(if (n == 2 && on) Icons.Rounded.Favorite else ic, null, tint = if (on) HypeDark else Color.White, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
 // ---------- Opening animation ----------
 const val FLYER_ASPECT = 0.7521f
 
@@ -1713,6 +2065,7 @@ const val FLYER_ASPECT = 0.7521f
 
 // ---------- Sections bar styles (chosen in Settings) ----------
 @Composable fun NavBar(sel: Int, onSelect: (Int) -> Unit, onAction: (Int) -> Unit) {
+    if (Audio.uiStyle == 5) { NavBarHype(sel, onSelect); return }
     if (Audio.uiStyle == 2) { NavBarGlass(sel, onSelect); return }
     when (Audio.navStyle) {
         0 -> NavBarClassic(sel, onSelect)
@@ -1885,7 +2238,8 @@ data class NavSec(val label: String, val icon: ImageVector, val tint: List<Color
         listOf("Default" to "The original Pixelfy look", "Discovery" to "Mood orbs, daily playlists and big rounded tiles",
             "Glass" to "Frosted glass, glowing orbs and translucent bars",
             "Ember" to "Red glow, glass cards, smart mix and listening tools",
-            "Recommend" to "Search, category chips and shaped recommendation tiles").forEachIndexed { i, (name, desc) ->
+            "Recommend" to "Search, category chips and shaped recommendation tiles",
+            "Hype" to "Navy and neon, marquee intro, mixes and album carousel").forEachIndexed { i, (name, desc) ->
             val sel = Audio.uiStyle == i
             val shape = RoundedCornerShape(22.dp)
             Row(Modifier.fillMaxWidth().padding(vertical = 6.dp).clip(shape).background(TileBg)

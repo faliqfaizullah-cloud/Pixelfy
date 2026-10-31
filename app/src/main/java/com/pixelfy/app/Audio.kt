@@ -24,7 +24,7 @@ import androidx.media3.exoplayer.ExoPlayer
 
 data class UserPlaylist(val id: Long, val name: String, val songIds: List<Long>)
 
-data class Song(val id: Long, val title: String, val artist: String, val albumId: Long, val uri: Uri, val kind: Int = 0) {
+data class Song(val id: Long, val title: String, val artist: String, val albumId: Long, val uri: Uri, val kind: Int = 0, val album: String = "") {
     val art: Uri get() = ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
     fun toItem(): MediaItem = MediaItem.Builder().setMediaId(id.toString()).setUri(uri)
         .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).setArtworkUri(uri).build()).build()
@@ -34,12 +34,12 @@ data class Song(val id: Long, val title: String, val artist: String, val albumId
 fun scanSongs(ctx: Context): List<Song> {
     val out = mutableListOf<Song>()
     val flags = if (android.os.Build.VERSION.SDK_INT >= 29) "${M.IS_MUSIC}!=0 OR ${M.IS_PODCAST}!=0 OR ${M.IS_AUDIOBOOK}!=0" else "${M.IS_MUSIC}!=0 OR ${M.IS_PODCAST}!=0"
-    val proj = arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM_ID, M.IS_MUSIC)
+    val proj = arrayOf(M._ID, M.TITLE, M.ARTIST, M.ALBUM_ID, M.IS_MUSIC, M.ALBUM)
     ctx.contentResolver.query(M.EXTERNAL_CONTENT_URI, proj, "($flags) AND ${M.DURATION}>30000", null, "${M.DATE_ADDED} DESC")?.use { c ->
         while (c.moveToNext()) {
             val id = c.getLong(0)
             out += Song(id, c.getString(1) ?: "Unknown", c.getString(2)?.takeIf { it != "<unknown>" } ?: "Unknown artist",
-                c.getLong(3), ContentUris.withAppendedId(M.EXTERNAL_CONTENT_URI, id), if (c.getInt(4) != 0) 0 else 1)
+                c.getLong(3), ContentUris.withAppendedId(M.EXTERNAL_CONTENT_URI, id), if (c.getInt(4) != 0) 0 else 1, c.getString(5)?.takeIf { it != "<unknown>" } ?: "")
         }
     }
     return out
